@@ -1,0 +1,30 @@
+# 依赖与产物
+node_modules/
+dist/
+build/
+out/
+*.tsbuildinfo
+.venv/
+__pycache__/
+
+# 环境与密钥
+.env
+.env.*
+!.env.example
+*.pem
+*.p12
+id_rsa*
+*.key
+
+# 日志与系统垃圾
+*.log
+.DS_Store
+tmp/
+.cache/
+
+# 工具私有状态（不该提交）
+.claude/settings.local.json
+CLAUDE.local.md
+AGENTS.local.md
+.codex-log/
+.worktrees/
