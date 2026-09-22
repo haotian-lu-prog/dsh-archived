@@ -1,0 +1,74 @@
+name: conventions
+
+# ~/dev 工作区公约的远端闸门：本地 hooks 能被 --no-verify 绕过，CI 不能。
+# 用法：复制到各仓库 .github/workflows/conventions.yml
+on:
+  pull_request:
+  push:
+    branches: [main, master]
+
+jobs:
+  conventions:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: 目录名（新目录必须小写 ASCII；基线已有的不追溯）
+        run: |
+          set -e
+          BASE="origin/${{ github.base_ref }}"
+          [ "${{ github.base_ref }}" != "" ] || BASE="origin/main"
+          git fetch --no-tags --depth=50 origin "${BASE#origin/}" >/dev/null 2>&1 || true
+          if ! git rev-parse --verify -q "$BASE" >/dev/null; then
+            echo "! 无法确定基线，跳过目录名检查"; exit 0
+          fi
+          bad=0
+          for path in $(git diff --name-only "$BASE"...HEAD); do
+            case "$path" in */*) dirs="${path%/*}" ;; *) continue ;; esac
+            cur=""
+            while IFS= read -r seg; do
+              cur="${cur:+$cur/}$seg"
+              git cat-file -e "$BASE:$cur" 2>/dev/null && continue
+              if ! printf '%s' "$seg" | grep -Eq '^_?\.?[a-z0-9][a-z0-9._-]*$'; then
+                echo "✗ 新目录名不合规：$cur"; bad=1
+              fi
+            done < <(printf '%s\n' "$dirs" | tr '/' '\n')
+          done
+          exit $bad
+
+      - name: 禁止提交依赖与构建产物
+        run: |
+          bad=$(git ls-files | grep -E '(^|/)(node_modules|dist|build|out)/' || true)
+          if [ -n "$bad" ]; then echo "✗ 提交了依赖或构建产物："; echo "$bad" | head; exit 1; fi
+
+      - name: 禁止环境变量与密钥文件
+        run: |
+          bad=$(git ls-files | grep -E '(^|/)\.env(\.|$)|\.pem$|\.p12$|\.key$|(^|/)id_rsa' | grep -v '\.env\.example' || true)
+          if [ -n "$bad" ]; then echo "✗ 不应提交："; echo "$bad" | head; exit 1; fi
+
+      - name: 大文件（>5MB）
+        run: |
+          bad=0
+          while IFS= read -r f; do
+            s=$(git cat-file -s "HEAD:$f" 2>/dev/null || echo 0)
+            if [ "$s" -gt 5242880 ]; then echo "✗ $f 超过 5MB"; bad=1; fi
+          done < <(git ls-tree -r --name-only HEAD)
+          exit $bad
+
+      - name: 密钥内容扫描
+        run: |
+          if git grep -nEI '(sk-[A-Za-z0-9_-]{20,}|AKIA[0-9A-Z]{16}|ghp_[A-Za-z0-9]{36}|github_pat_[A-Za-z0-9_]{20,}|-----BEGIN [A-Z ]*PRIVATE KEY-----)' HEAD -- . | head -5 | grep -q .; then
+            echo "✗ 疑似密钥进入仓库"; exit 1
+          fi
+
+      - name: AGENTS.md 必须存在
+        run: test -f AGENTS.md || { echo "✗ 仓库根缺少 AGENTS.md"; exit 1; }
+
+      - name: HANDOFF.md 未更新（仅提醒）
+        continue-on-error: true
+        run: |
+          BASE="${{ github.base_ref }}"
+          [ -n "$BASE" ] || BASE=main
+          git diff --name-only "origin/$BASE...HEAD" | grep -q '^HANDOFF.md$' || echo "! 本次改动未更新 HANDOFF.md"
