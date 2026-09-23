@@ -23,7 +23,7 @@
 
 ## 下一步
 
-- [ ] `tools/e2e.py:25` 的 `WORKSPACE` 硬编码了 iCloud 路径（`/Users/lu.haotian/Library/Mobile Documents/com~apple~CloudDocs/Ai`）→ 改成从命令行参数或环境变量取，否则换机器/换工作区就跑不了
+- [x] ~~`tools/e2e.py` 的 `WORKSPACE` 硬编码 iCloud 路径~~ → **已修（2026-09-23）**：解析顺序 `--workspace` > `$DSH_E2E_WORKSPACE` > 当前目录；`--print-workspace` 可在不碰 DSH 的情况下查看解析结果；路径不存在时退出 2 并给出提示。注意 `--print-workspace` 与真正跑测试走同一套校验。
 - [ ] 浏览器验收依赖手动起 Chrome 调试端口；若以后想上 CI，只把前两套（无需浏览器）放进 workflow
 - [ ] `plugin/package.json` 是 `"private": true`；哪天要发布到 npm，需要补版本策略与 `files`
 

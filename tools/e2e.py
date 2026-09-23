@@ -6,7 +6,13 @@ it through the plugin's own HTTP route exactly as the settings panel does, and
 checks all three pieces of state (artifact directory, projection cache, archive
 index entry) are gone.
 
-    python3 tools/e2e.py
+    python3 tools/e2e.py                      # 用当前目录当会话工作区
+    python3 tools/e2e.py --workspace ~/dev    # 指定工作区
+    DSH_E2E_WORKSPACE=~/dev python3 tools/e2e.py
+    python3 tools/e2e.py --print-workspace     # 只打印解析结果，不碰 DSH
+
+工作区（scratch 会话的 cwd）解析顺序：`--workspace` > `DSH_E2E_WORKSPACE` > 当前目录。
+以前这里写死了一个 iCloud 路径，换机器/换工作区就跑不了。
 """
 
 import glob
@@ -22,8 +28,44 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from rpc import base_url, cookie_header  # noqa: E402  (same-directory helper)
 
 HEADER = "x-dsh-archived-sessions"
-WORKSPACE = "/Users/lu.haotian/Library/Mobile Documents/com~apple~CloudDocs/Ai"
 FAILURES = []
+
+
+def normalize_workspace(raw):
+    """展开 ~、转绝对路径，并确认它是个真实目录；不合法就退出 2。"""
+    workspace = os.path.abspath(os.path.expanduser(raw))
+    if not os.path.isdir(workspace):
+        print(f"工作区不存在或不是目录：{workspace}", file=sys.stderr)
+        print("用 --workspace <目录> 或环境变量 DSH_E2E_WORKSPACE 指定。", file=sys.stderr)
+        raise SystemExit(2)
+    return workspace
+
+
+def resolve_workspace(argv):
+    """解析会话工作区；`--help` / `--print-workspace` 会直接退出。"""
+    chosen = None
+    index = 0
+    while index < len(argv):
+        arg = argv[index]
+        if arg == "--workspace" and index + 1 < len(argv):
+            chosen = argv[index + 1]
+            index += 2
+            continue
+        if arg.startswith("--workspace="):
+            chosen = arg.split("=", 1)[1]
+            index += 1
+            continue
+        if arg in ("-h", "--help"):
+            print(__doc__)
+            raise SystemExit(0)
+        if arg == "--print-workspace":
+            # 打印的是「真正会被用的值」，所以同样过一遍校验，别给出一个跑不起来的路径
+            print(normalize_workspace(chosen or os.environ.get("DSH_E2E_WORKSPACE") or os.getcwd()))
+            raise SystemExit(0)
+        print(f"未知参数：{arg}（--help 看用法）", file=sys.stderr)
+        raise SystemExit(2)
+
+    return normalize_workspace(chosen or os.environ.get("DSH_E2E_WORKSPACE") or os.getcwd())
 
 
 def check(label, condition, detail=""):
@@ -82,10 +124,12 @@ def artifacts_of(session_id):
 
 
 def main():
+    workspace = resolve_workspace(sys.argv[1:])
     scratch = "session-" + str(uuid.uuid4())
-    print(f"scratch session: {scratch}\n")
+    print(f"scratch session: {scratch}")
+    print(f"workspace: {workspace}\n")
 
-    created = rpc("session/create", {"sessionId": scratch, "cwd": WORKSPACE})
+    created = rpc("session/create", {"sessionId": scratch, "cwd": workspace})
     check("session/create created the scratch session", bool(created and created.get("ok")), json.dumps(created)[:160])
 
     archived = rpc("workspace/archiveSession", {"sessionId": scratch})

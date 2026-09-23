@@ -82,6 +82,7 @@ ln -s /path/to/plugin ~/.dsh/profiles/web/node_modules/dsh-archived-sessions-man
 
 ```sh
 python3 tools/e2e.py             # 宿主：建临时会话 → 归档 → 走 HTTP 删除 → 校验三处状态（15 项）
+                                 #   会话工作区默认取当前目录；可用 --workspace <目录> 或 DSH_E2E_WORKSPACE 指定
 node tools/client-smoke.mjs      # 客户端：桩 React 加载 client.js，校验抢位注册与渲染（13 项）
 python3 tools/browser-acceptance.py   # 真浏览器：无头 Chrome 里点完整流程（17 项，含导航行去重）
 python3 tools/browser-acceptance.py --dump   # 只打印面板可见文本，便于排查

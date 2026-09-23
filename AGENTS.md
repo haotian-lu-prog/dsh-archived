@@ -17,6 +17,7 @@
 
 ```sh
 python3 tools/e2e.py                    # 宿主端到端；需要本机 DSH 在跑
+python3 tools/e2e.py --workspace ~/dev   # 指定会话工作区（默认当前目录；也可用 DSH_E2E_WORKSPACE）
 node tools/client-smoke.mjs             # 客户端冒烟
 python3 tools/browser-acceptance.py     # 真浏览器；先起无头 Chrome --remote-debugging-port=9333
 python3 tools/browser-acceptance.py --dump   # 只打印面板文本，便于排查
