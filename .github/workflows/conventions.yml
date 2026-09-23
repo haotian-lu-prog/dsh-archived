@@ -59,7 +59,8 @@ jobs:
 
       - name: 密钥内容扫描
         run: |
-          PAT='(sk-[A-Za-z0-9_-]{20,}|AKIA[0-9A-Z]{16}|ghp_[A-Za-z0-9]{36}|github_pat_[A-Za-z0-9_]{20,}|-----BEGIN [A-Z ]*PRIVATE KEY-----)'
+          # sk- 前锚词边界：ask-codex-to-look-across-your 这类路径里也含 sk-+长串，不锚定会误报
+          PAT='((^|[^A-Za-z0-9])sk-[A-Za-z0-9_-]{20,}|AKIA[0-9A-Z]{16}|ghp_[A-Za-z0-9]{36}|github_pat_[A-Za-z0-9_]{20,}|-----BEGIN [A-Z ]*PRIVATE KEY-----)'
           # 标了 `secret-scan:allow` 的行按测试夹具处理（例：门禁自测里故意写的假 token）。
           # 没有这个豁免，扫描器会把「测扫描器的夹具」当成真密钥，自己把自己拦下来。
           hits="$(git grep -nEI "$PAT" HEAD -- . | grep -v 'secret-scan:allow' || true)"
