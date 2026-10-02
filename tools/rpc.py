@@ -32,12 +32,19 @@ def b64u(raw: bytes) -> str:
     return base64.urlsafe_b64encode(raw).decode().rstrip("=")
 
 
+def dsh_home() -> str:
+    """The DSH home the target host runs with, so an isolated test host works."""
+    configured = os.environ.get("DSH_HOME")
+    if configured is not None and configured.strip() != "":
+        return os.path.abspath(os.path.expanduser(configured.strip()))
+    return os.path.join(os.path.expanduser("~"), ".dsh")
+
+
 def cookie_header(authority: str) -> str:
-    home = os.path.expanduser("~")
-    text = open(os.path.join(home, ".dsh", ".credentials.yaml")).read()
+    text = open(os.path.join(dsh_home(), ".credentials.yaml")).read()
     match = re.search(r"^\s*secret:\s*([A-Za-z0-9_-]{43})\s*$", text, re.M)
     if match is None:
-        raise SystemExit("no browser-session secret in ~/.dsh/.credentials.yaml")
+        raise SystemExit(f"no browser-session secret in {os.path.join(dsh_home(), '.credentials.yaml')}")
     secret = base64.urlsafe_b64decode(match.group(1) + "=" * ((4 - len(match.group(1)) % 4) % 4))
     name = "dsh-auth-" + b64u(hashlib.sha256(authority.encode()).digest())
     now = int(time.time() * 1000)

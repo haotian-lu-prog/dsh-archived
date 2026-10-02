@@ -74,6 +74,14 @@ def resolve_workspace(argv):
     return normalize_workspace(chosen or os.environ.get("DSH_E2E_WORKSPACE") or os.getcwd())
 
 
+# \`tools/browser-acceptance.py\` imports this module and uses WORKSPACE as the
+# scratch session's cwd, so it has to exist at import time and resolve exactly
+# the way the CLI resolves it. `--workspace` stays a CLI-only concern; an
+# importer gets the environment/cwd fallback. (Without this the browser suite
+# died on ImportError before it ever reached the panel.)
+WORKSPACE = normalize_workspace(os.environ.get("DSH_E2E_WORKSPACE") or os.getcwd())
+
+
 def check(label, condition, detail=""):
     mark = "PASS" if condition else "FAIL"
     print(f"[{mark}] {label}{(' — ' + detail) if detail else ''}")

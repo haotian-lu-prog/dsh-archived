@@ -16,8 +16,8 @@ DSH 的「设置 → 已归档」页：逐条 / 批量删除已归档会话，�
 - `tools/host-smoke.mjs` — 宿主离线套件（45 项，临时 `DSH_HOME` + 假 ctx，**不需要 DSH**）
 - `tools/client-smoke.mjs` — 客户端冒烟（31 项，桩 React + 桩 fetch）
 - `tools/compat-check.mjs` — 宿主契约检查（11 项，直接读 app.asar；DSH 升级后**先跑这个**）
-- `tools/e2e.py` — 真宿主端到端（建临时会话 → 归档 → 删除 → 回收站 → 恢复 → 永久删除）
-- `tools/browser-acceptance.py` — 真浏览器验收（纯标准库 CDP）
+- `tools/e2e.py` — 真宿主端到端（41 项：建临时会话 → 归档 → 删除 → 回收站 → 恢复 → 永久删除）
+- `tools/browser-acceptance.py` — 真浏览器验收（25 项，纯标准库 CDP）
 - `tools/rpc.py` — 本地 RPC 助手：用 `~/.dsh/.credentials.yaml` 里的会话密钥现场签 cookie
 
 ## 命令
@@ -31,6 +31,11 @@ python3 tools/e2e.py             # 真宿主；需要 dsh web 在跑且插件已
 python3 tools/e2e.py --print-workspace          # 只看工作区解析结果
 python3 tools/browser-acceptance.py             # 真浏览器；先起无头 Chrome --remote-debugging-port=9333
 ```
+
+浏览器验收的断言是**中文文案**，所以目标 profile 的界面语言要是中文，否则会误报：
+`profiles/<name>/cordis.patch.yml` 里加 `- id: locale` / `config: { preference: zh }`。
+最安全的跑法是**隔离宿主**：`DSH_HOME=<临时目录> dsh web --port <port>`，再用
+`DSH_HOME=<临时目录> DSH_WEB_URL=http://127.0.0.1:<port> python3 tools/browser-acceptance.py`。
 
 AI 代理改完代码**至少跑 `npm test`**；动了路由/删除流水线要再跑 `tools/e2e.py`；动了渲染要跑浏览器验收。
 
