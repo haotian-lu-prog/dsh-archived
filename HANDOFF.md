@@ -88,3 +88,19 @@ profile patch 里 `disabled: true`）全部空转。而 `settings.section` 的 `
 顺带把 `tools/e2e.py` 在**忙碌真宿主**上的三处竞态改成确定性断言（宿主会在删除后重新写回缓存、
 并重新物化它仍持有的会话）：现在对着正在使用的 GUI 连跑两次都是 36 PASS + 3 SKIP，跑完不留残留。
 
+
+### 2026-10-02 · 改名执行记录（dsh-archived-sessions-manager → dsh-archived）
+
+- **GitHub**：`gh repo rename dsh-archived`；旧 URL 仍会重定向。改名 PR #8 合并于 `850db2f`。
+- **npm**：`dsh-archived@0.3.0` 已发布；旧包 0.1.0 / 0.2.0 用 `npm deprecate` 指向新包（**没有** unpublish）。
+- **本机 desktop profile 已切换**。踩到两个坑，都写下来：
+  1. **先 add 新的再 remove 旧的会出事**——两个插件抢同一个 `settings.section` 插槽（同 id + 同 priority 会抛），
+     顺序必须**先 remove 旧的、再 add 新的**。
+  2. remove 之前若把旧包名从 `minimumReleaseAgeExclude` 里删掉，**remove 自己会被供应链闸门拦住**
+     （旧包 0.2.0 才发布几小时）。正确做法：让旧包名留在排除列表里直到移除完成，之后再清掉那条过期项。
+- **目录**：本机仓库目录改名 `~/Dev/plugins/dsh-archived`；确认过没有任何 profile / HMR 配置引用旧路径。
+- **验证**：改名后三套离线套件全绿（45 / 31 / 11），真宿主 e2e 对着正在用的 GUI 跑 36 PASS + 3 SKIP，
+  跑完 archived 0 / quarantine 0；新路由 `/api/dsh-archived/state` 返回 200，旧路由已消失。
+- **有意保留**：回收站目录 `$DSH_HOME/.archived-sessions-quarantine/`、设置页插槽 id `archived-sessions`（DSH 官方 id）。
+- catalog：PR #6375 的分支上已把条目文件改名为 `haotian-lu-prog__dsh-archived.yml` 并更新 url/name。
+
