@@ -144,7 +144,7 @@ python3 tools/browser-acceptance.py   # 真浏览器；先起无头 Chrome --rem
 里 `minimumReleaseAgeExclude` 是**按「包名@版本」逐条累加**的——同一个包名出现两条时**只有其中一条生效**
 （实测是列表里靠前的那条），于是新发布的那个版本永远过不了闸门。报错点名的包可能根本不是你要装的那个。
 
-修法：让每个包名只留一条，用范围覆盖新旧版本：
+修法：让每个包名只留一条，把已接受的**确切版本**用 `||` 连起来：
 
 ```yaml
 minimumReleaseAgeExclude:
@@ -157,7 +157,12 @@ minimumReleaseAgeExclude:
   - dsh-notifications@2.0.0            #    2.0.0 那条不生效
 ```
 
-删掉重复行后直接重跑 `dsh plugin --profile <name> add <包名>` 即可。
+⚠️ **只接受确切版本**：写成 `dsh-notifications@*` 或 `@^2.0.0` 会被直接拒绝
+（`ERR_PNPM_INVALID_MINIMUM_RELEASE_AGE_EXCLUDE: Use exact versions only.`）。
+
+pnpm 每次成功安装后都会往这个列表追加一条「包名@版本」，所以升级几次之后又会出现同名两条——
+发现同名时把它们合并成上面那种 `||` 形式即可。删掉重复行后重跑
+`dsh plugin --profile <name> add <包名>` 就通了。
 
 ## 已知边界
 
