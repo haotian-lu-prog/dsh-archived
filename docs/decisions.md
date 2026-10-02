@@ -48,6 +48,28 @@ catalog 的 CI（`scripts/check-submission.mjs`）与 dsh-market 前端都以**�
 投影缓存文档实测带 `record.rows.title.val` 与 `record.identity.{createdAt, cwd, formatVersion}`，足够画一行。
 `tools/client-smoke.mjs` 有两条断言盯这个回归（index-only 行必须渲染、只有宿主知道标题的行必须用宿主标题）。
 
+## 2026-10-02 · 放宽路由信任：桌面应用被误拒（0.3.1）
+
+**现象**：在 **DeepSeek Harness 桌面应用**里，设置 → 已归档 一直显示"读不到宿主状态"，而同一台机器上
+用普通浏览器（含无头 Chrome）打开同一个 `http://127.0.0.1:19387` 却完全正常。
+
+**排查**（每一步都留下证据，先后推翻了两个错误假设）：
+1. 先以为是"插件没装/改名没生效"——宿主路由 200、boot payload 只有新名字，否定。
+2. 再以为是"页面挂着改名前的旧客户端"——桌面应用的 Code Cache 显示 17:49–17:52 已经加载了新模块，否定。
+3. 读到 `@deepseek-ai/dsh-desktop-host`：桌面应用起 `--port 19387`、把
+   `ctx.connection.authenticatedUrl(...)` 连同 `collectIndexInjections()` 通过 IPC 交给 Electron 加载；
+   Electron 侧存在 `x-dsh-auth-token` 与 `webRequest` 相关逻辑——也就是说**桌面应用的请求会经过它自己的管线**，
+   不一定带着页面发起的 fetch 才有的 Fetch Metadata 头。
+
+**根因**：原信任规则要求 `sec-fetch-site: same-origin`（或 `Origin` 与 Host 匹配）**且**自定义标头
+`x-dsh-archived` **同时**成立。桌面应用的调用一旦缺少 Fetch Metadata 头，就被判 403，而 403 又不留任何痕迹。
+
+**新规则**：回环 + 非跨站；`Origin`/`sec-fetch-site` 一旦出现就权威且不能被标头推翻；两者都没有时才要标头。
+配套两条：把**被拒请求连同证据**记进内存并由 `/state` 暴露（最多 20 条），以及让客户端在报错里带上原因。
+
+**顺带**：旧的 `/api/dsh-archived-sessions/*` 前缀与旧标头继续服务，让改名时已经打开的标签页
+不必刷新就能继续用——改一次名不该把所有开着的窗口变成错误页。
+
 ## 2026-10-02 · 项目改名为 `dsh-archived`
 
 **背景**：原名 `dsh-archived-sessions-manager` 同时是仓库名、npm 包名、插件 id 和仓库目录名，太长；

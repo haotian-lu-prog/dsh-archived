@@ -177,7 +177,9 @@ const artifactOf = (id) => join(home, "sessions", bucket, id);
 const cacheOf = (id) => join(home, "storages", "session_projcache", "sessions", id + ".json");
 
 // --- route shape ----------------------------------------------------------------
-check("registers six routes", routes.size === 6, [...routes.keys()].join(", "));
+check("registers six routes under both prefixes", routes.size === 12
+  && [...routes.keys()].some((p) => p.startsWith("/api/dsh-archived/"))
+  && [...routes.keys()].some((p) => p.startsWith("/api/dsh-archived-sessions/")), [...routes.keys()].length + " routes");
 
 // --- state ----------------------------------------------------------------------
 const state = await call(P + "/state");
@@ -194,12 +196,25 @@ check("legacy aggregate membership is reported", byId[ids.withArtifact].legacyRo
 check("stale quarantine entry expired at load", existsSync(join(home, ".archived-sessions-quarantine", stale)) === false);
 
 // --- trust ------------------------------------------------------------------------
+// A same-origin signal is proof enough on its own: the shipped web client
+// sends the marker, but the Desktop app's pipeline may not carry custom
+// headers, and refusing it there was the bug this rule fixes.
 const noMarker = await call(P + "/state", { headers: { [HEADER]: undefined } });
-check("missing marker header is refused", noMarker.status === 403, String(noMarker.status));
+check("a browser-shaped same-origin GET needs no marker", noMarker.status === 200, String(noMarker.status));
 const crossOrigin = await call(P + "/state", { headers: { origin: "http://evil.example" } });
-check("cross-origin Origin is refused", crossOrigin.status === 403, String(crossOrigin.status));
-const noSignal = await call(P + "/state", { headers: { "sec-fetch-site": undefined } });
-check("no same-origin signal is refused", noSignal.status === 403, String(noSignal.status));
+check("origin mismatch is fatal even with the marker", crossOrigin.status === 403, String(crossOrigin.status));
+const crossSite = await call(P + "/state", { headers: { "sec-fetch-site": "cross-site" } });
+check("cross-site fetch metadata is fatal even with the marker", crossSite.status === 403, String(crossSite.status));
+const noSignalNoMarker = await call(P + "/state", { headers: { [HEADER]: undefined, "sec-fetch-site": undefined } });
+check("no signal and no marker is refused", noSignalNoMarker.status === 403, String(noSignalNoMarker.status));
+const legacyMarker = await call("/api/dsh-archived-sessions/state", { headers: { [HEADER]: undefined, "x-dsh-archived-sessions": "1" } });
+check("the pre-rename marker still works", legacyMarker.status === 200 && legacyMarker.body.apiVersion === 2, String(legacyMarker.status));
+const legacyNoMarker = await call("/api/dsh-archived-sessions/state", { headers: { [HEADER]: undefined, "sec-fetch-site": undefined } });
+check("the legacy prefix is no looser than the current one", legacyNoMarker.status === 403, String(legacyNoMarker.status));
+const refusals = (await call(P + "/state")).body.refusals;
+check("refused requests are recorded with their evidence",
+  Array.isArray(refusals) && refusals.length >= 2 && refusals[0].trusted === false && "site" in refusals[0],
+  JSON.stringify(refusals?.[0] ?? null).slice(0, 160));
 const wrongMethod = await call(P + "/delete", { method: "GET" });
 check("wrong method is refused", wrongMethod.status === 405, String(wrongMethod.status));
 
