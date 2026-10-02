@@ -1,90 +1,94 @@
 # dsh-archived-sessions-manager
 
-给 DSH Web 的 **设置 → 已归档会话** 这一栏加上「彻底删除」和「清空全部」：把归档里的会话连同磁盘日志、投影缓存一起删干净，而不是只能取消归档。
+给 DeepSeek Harness 的 **设置 → 已归档** 页补上删除：逐条删、勾选批量删、清空；
+删除**默认先进回收站**（30 天内可恢复），并显示每行的磁盘占用。
+
+DSH 至今没有官方「删除会话」的接口——归档只能取消归档，日志和投影缓存会一直留在磁盘上。
+这个插件就是补上那一块。
 
 ## 它做了什么
 
-一次彻底删除要清三处状态，缺一处列表就会骗人：
+DSH 0.2.0-rc.2 里，一个已归档会话牵涉四处状态，少清一处列表就会骗人：
 
 | # | 状态 | 位置 |
 |---|---|---|
-| 1 | 会话日志目录 | `$DSH_HOME/sessions/<编码工作区>/session-<id>` |
-| 2 | 投影缓存 | `$DSH_HOME/storages/session_projcache/sessions/<id>.json` |
+| 1 | 会话日志目录 | `$DSH_HOME/sessions/<编码工作区>/session-<id>/`（`session.v4.jsonl.zstd` + `session.lock`） |
+| 2 | 投影缓存文档 | `$DSH_HOME/storages/session_projcache/sessions/<id>.json` |
 | 3 | 归档索引 | workspace registry 的 `archivedSessionIds` |
+| 4 | 回收站（本插件自建） | `$DSH_HOME/.archived-sessions-quarantine/<id>/` |
 
-第 3 步走官方 `ctx.workspaceRegistry.unarchiveSession()`——它刻意不校验会话是否存在，正好能把"只剩索引"的残留一起清掉，并借官方广播刷新所有已连接的客户端。
+删除有两条路径，界面上是**两个分开的按钮**：
 
-安全边界：
+- **删除**（默认）：把 1、2 移动进 4，再清 3。面板顶部常显「回收站：N 个 · X MB」，可以逐条恢复或整体清空；30 天后自动清除。
+- **永久删除**：只出现在二次确认里，直接 unlink，不进回收站。
+
+第 3 步走官方 `ctx.workspaceRegistry.unarchiveSession()`——它刻意不校验会话是否存在，正好能把「只剩索引」的残留一起清掉，
+并借官方广播刷新所有已连接的客户端。
+
+## 安全边界
 
 - 只接受**已归档**的 id（`not-archived` 直接拒绝），不碰未归档会话；
-- `agent.status === "running"` 的会话拒绝删除（正在生成的回合不能丢日志），空闲但打开的会话可删——与 session-manager 同一规则；
-- 路由仅限回环地址 + 同源 + 自定义标头：`Origin` 存在时必须与 Host 匹配；浏览器对同源 GET 不发 `Origin`，该情形由 `sec-fetch-site: same-origin` 兜底，两个信号都没有则拒绝。
+- `agent.status === "running"` 的会话拒绝删除（正在生成的回合不能丢日志），空闲但打开的会话可删；
+- 有**正在运行的 subagent 后代**时拒绝删除父会话（否则子会话的父会话会在它脚下消失）；
+- **索引残留没有 payload 就不进回收站**：一个只有索引、磁盘上什么都没有的 id，清掉即可，不该在回收站里留一个永远恢复不了的条目；
+- 路由仅限回环地址 + 同源 + 自定义标头：`Origin` 存在时必须与 Host 匹配；浏览器对同源 GET 不发 `Origin`，
+  该情形由 `sec-fetch-site: same-origin` 兜底，两个信号都没有则拒绝；
+- 宿主若失去 `workspaceRegistry.unarchiveSession`，破坏性路由**直接拒绝**（`no-registry`），不会「删了文件但留下索引」这种假成功。
 
 ### 删除后的残留清理
 
-会话被归档时如果它的 agent 还开着（空闲未运行），`session/create` 之外的进程状态仍在内存里，DSH 的投影服务可能在删除后几秒把 `<id>.json` 缓存重新写回（日志目录不会复活）。因此每次成功删除都会排三个定时清扫（+3s / +15s / +60s），再次清掉这类残留；清扫前会重新确认该会话既没有回到归档集合、也没有开始跑回合。定时器在插件卸载时统一取消。
+会话被归档时如果它的 agent 还开着（空闲未运行），DSH 的投影服务可能在删除后几秒把 `<id>.json` 缓存重新写回
+（日志目录不会复活）。因此每次成功删除都会排三个定时清扫（+3s / +15s / +60s），再次清掉这类残留。
+清扫只删缓存文档，且要求该会话既没回到归档集合、也没在跑、磁盘上也没有会话目录——目录回来了说明会话被恢复了，绝不碰。
+定时器在插件卸载时统一取消。
 
 ## 界面
 
-**接管**而不是新增一栏，但接管分两步——这是踩过的坑：
+行的事实源是**宿主**（`GET /state`：归档集合 + 磁盘 + 投影缓存文档），浏览器的会话摘要只用来把标题和时间显示得更准。
+这一点是有意的：索引里还留着、但浏览器没加载过的会话，**必须照样成行显示**，否则用户根本无从清理。
 
-1. **渲染**由 slot 注册表决定：list 插槽按 `(id, priority)` 去重、**优先级最低者渲染**（"reusing a shipped id puts you in THAT cell and replaces it"）。本插件用 `priority: -1` 注册同一 id `archived-sessions`，页面内容归本插件。
-2. **导航行**由设置外壳按"已注册条目"逐条生成，**不看去重结果**——所以官方那条即便渲染时被遮蔽，仍会多出一行「已归档会话」，设置里就出现两个同名入口。因此必须在 profile patch 里把官方条目 `disabled: true`：
+页面提供：搜索（标题 / 会话 ID / 工作区）、按工作区分组、逐行勾选与全选、每行展开详情
+（占用空间、创建时间、缓存有无、父/子会话）、「打开文件夹」、行内二次确认、结果就地反馈，
+以及顶部常显的回收站（恢复最近一个 / 清空）。
 
-```yaml
-# ~/.dsh/profiles/web/cordis.patch.yml
-- id: ui-settings-unarchive-sessions
-  disabled: true
-```
-
-`priority: -1` 保留着，是为了万一官方条目被 DSH 升级重新启用时仍然抢得住渲染。验收脚本里有一条 `exactly one 已归档会话 nav row` 专门盯这个回归。
-
-页面保留官方的搜索、行布局、取消归档与三种空态，新增：
-
-- 每行「彻底删除」→ 行内二次确认（"删除后不可恢复" + 确认删除 / 取消）；
-- 顶部「清空全部（N）」→ 二次确认后逐条删除，逐条跳过运行中的会话；
-- 每行元信息附带磁盘占用（`日志 92 KB` / `仅索引残留`），来自 `GET /state`；
-- 操作结果就地反馈（删了几个、释放多少、失败几个）。
+导航行与页面标题都是 **`Archived`（英文）/ `已归档`（中文）**。
 
 ## 宿主路由
 
 | 方法 | 路径 | 说明 |
 |---|---|---|
-| GET | `/api/dsh-archived-sessions/state` | 归档 id + 各自磁盘占用 |
-| POST | `/api/dsh-archived-sessions/purge` | `{ sessionId }` 彻底删除一个 |
-| POST | `/api/dsh-archived-sessions/purge-all` | 清空当前归档集合 |
+| GET | `/api/dsh-archived-sessions/state` | 归档行 + 磁盘占用 + 血缘 + 回收站 + 旧聚合探测 |
+| POST | `/api/dsh-archived-sessions/delete` | `{ sessionId, mode: "quarantine" \| "forever" }` |
+| POST | `/api/dsh-archived-sessions/delete-all` | `{ mode, ids? }`；`ids` 缺省表示清空全部 |
+| POST | `/api/dsh-archived-sessions/restore` | `{ sessionId }` 从回收站恢复并重新归档 |
+| POST | `/api/dsh-archived-sessions/empty-quarantine` | 彻底清空回收站 |
+| POST | `/api/dsh-archived-sessions/reveal` | `{ sessionId }` 在系统文件管理器里打开该会话目录 |
+
+拒绝码：`invalid-session-id`、`not-archived`、`session-running`、`subagent-running`、`no-registry`、
+`busy`、`not-quarantined`、`no-artifact`、`forbidden`、`internal`。
 
 ## 安装
 
-### 从 npm（推荐）
-
 ```sh
-# 1) 装进 profile；包自带的 bundle patch 会把它挂上
+# 装进 profile（包自带的 bundle patch 会把它挂上）
 dsh plugin --profile web add dsh-archived-sessions-manager
 
-# 2) 关掉官方那一页（只靠 priority 遮蔽，导航里会留下两个同名入口）
-#    ~/.dsh/profiles/web/cordis.patch.yml
-#      - id: ui-settings-unarchive-sessions
-#        disabled: true
-
-# 3) 重启 dsh web
+# 重启 dsh web，然后 设置 → 已归档
 ```
+
+**不需要改 profile patch。** DSH 0.2.0-rc.2 已经没有官方的归档设置页，`settings.section` 的
+`archived-sessions` id 是空的，本插件是它唯一的占用者。
 
 ### 从源码（开发用）
 
 ```sh
 # 1) 让 profile 能解析到这个包（link: 指向本仓库根目录）
+ln -s /path/to/repo ~/.dsh/profiles/web/node_modules/dsh-archived-sessions-manager
 #    ~/.dsh/profiles/web/package.json
 #      "dependencies": { "dsh-archived-sessions-manager": "link:/path/to/repo" }
 #      "dsh": { "profile": { "bundles": [ ..., "dsh-archived-sessions-manager" ] } }
-ln -s /path/to/repo ~/.dsh/profiles/web/node_modules/dsh-archived-sessions-manager
 
-# 2) 同上：关掉官方那一页
-#    ~/.dsh/profiles/web/cordis.patch.yml
-#      - id: ui-settings-unarchive-sessions
-#        disabled: true
-
-# 3) 开发时热重载宿主代码（默认 root: [] 只监听 profile 清单与 patch 文件）
+# 2) 开发时热重载宿主代码（默认 root: [] 只监听 profile 清单与 patch 文件）
 #    ~/.dsh/profiles/web/cordis.patch.yml
 #      - id: hmr
 #        config:
@@ -92,34 +96,50 @@ ln -s /path/to/repo ~/.dsh/profiles/web/node_modules/dsh-archived-sessions-manag
 #            - "/path/to/repo"
 ```
 
-`dsh-hmr` 只监听 profile 清单与 patch 文件；改了 `lib/index.js` 想立即生效，需要把本仓库根目录加进 `hmr.config.root`。客户端半边改动刷新浏览器即可。
+`dsh-hmr` 只监听 profile 清单与 patch 文件；改了 `lib/index.js` 想立即生效，需要把本仓库根目录加进 `hmr.config.root`。
+客户端半边改动刷新浏览器即可。
+
+## 兼容性
+
+- 目标宿主：**DSH 0.2.0-rc.2**（`peerDependencies` 收敛到 `^0.2.0-rc.1`）。
+- **不支持 0.1.x**：那时官方还有一个归档设置页，需要手动 `disabled: true`；0.2.0-rc.2 已经没有它了。
+  代码里的 `priority: -1` 只是对「还带官方页的宿主」的防御。
+- DSH 升级后**先跑契约检查**，它直接读本机 app.asar，逐条确认插件依赖的接口还在：
+  `node tools/compat-check.mjs`。
 
 ## 测试
 
 ```sh
-python3 tools/e2e.py             # 宿主：建临时会话 → 归档 → 走 HTTP 删除 → 校验三处状态（15 项）
-                                 #   会话工作区默认取当前目录；可用 --workspace <目录> 或 DSH_E2E_WORKSPACE 指定
-node tools/client-smoke.mjs      # 客户端：桩 React 加载 client.js，校验抢位注册与渲染（13 项）
-python3 tools/browser-acceptance.py   # 真浏览器：无头 Chrome 里点完整流程（17 项，含导航行去重）
-python3 tools/browser-acceptance.py --dump   # 只打印面板可见文本，便于排查
+npm test                        # 宿主离线 + 客户端冒烟 + 宿主契约，都不需要 DSH
+node tools/host-smoke.mjs       # 宿主半边：临时 $DSH_HOME + 假 ctx，跑完删除/恢复/回收站全流程
+node tools/client-smoke.mjs     # 客户端半边：桩 React + 桩 fetch
+node tools/compat-check.mjs     # 宿主契约（读 app.asar）
+python3 tools/e2e.py            # 真宿主端到端；需要 dsh web 在跑且插件已加载
+python3 tools/browser-acceptance.py   # 真浏览器；先起无头 Chrome --remote-debugging-port=9333
 ```
 
-`tools/browser-acceptance.py` 是纯标准库的 CDP 客户端（自己实现 WebSocket 握手与帧）：用本机密钥签出浏览器会话 cookie 注入无头 Chrome，打开 `设置 → 已归档会话`，断言页面上确有「彻底删除 / 清空全部」、行上确有磁盘占用标注，然后**真的点**「彻底删除 → 确认删除」，最后回到宿主校验归档集合与磁盘。跑之前需要一个开着调试端口的 Chrome：
+`tools/e2e.py` 会建临时会话 → 归档 → 删除（进回收站）→ 恢复 → 永久删除，并核对
+「其他归档会话与磁盘上的其他会话数量都没变」。
 
-```sh
-"/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
-  --headless=new --no-sandbox --disable-gpu --window-size=1680,1050 \
-  --user-data-dir=/tmp/dsh-chrome-prof --remote-debugging-port=9333 about:blank &
-```
+`tools/browser-acceptance.py` 是纯标准库的 CDP 客户端（自己实现 WebSocket 握手与帧）：用本机密钥签出浏览器会话 cookie
+注入无头 Chrome，打开 `设置 → 已归档`，断言导航里只有一个「已归档」入口，然后**真的点**删除 → 确认 → 恢复最近一个。
 
-`tools/e2e.py` 现在覆盖 15 项检查：完整删除链路、三种拒绝码语义、以及四种请求信任形态（无 Origin 的同源 GET、跨源 Origin、无信号、缺自定义标头）。
-
-`tools/rpc.py` 是本地 RPC 小工具：用 `~/.dsh/.credentials.yaml` 里的浏览器会话密钥现场签 cookie，从终端调用官方 RPC（`session/create`、`workspace/archiveSession` 等），测试因此不需要浏览器，也不会碰真实会话。
+`tools/rpc.py` 是本地 RPC 小工具：用 `~/.dsh/.credentials.yaml` 里的浏览器会话密钥现场签 cookie，
+从终端调用官方 RPC（`session/create`、`workspace/archiveSession` 等），测试因此不需要浏览器，也不会碰真实会话。
 
 ## 回滚
 
 1. 从 `~/.dsh/profiles/web/package.json` 的 `bundles` 与 `dependencies` 里删掉 `dsh-archived-sessions-manager`；
-2. 删掉 `~/.dsh/profiles/web/node_modules/dsh-archived-sessions-manager` 软链；
-3. `~/.dsh/profiles/web/cordis.patch.yml` 恢复为 `[]`——这一步同时会**重新启用官方归档页**（`ui-settings-unarchive-sessions`），导航与页面都回到出厂状态。
+   或直接 `dsh plugin --profile web remove dsh-archived-sessions-manager`；
+2. 删掉 `~/.dsh/profiles/web/node_modules/dsh-archived-sessions-manager` 软链（源码安装时）；
+3. `~/.dsh/.archived-sessions-quarantine/` 里可能还有待恢复的会话——确认不需要后手动删除即可。
 
-官方「已归档会话」页面随即回到原位；本插件删掉的会话不会回来（删除不可恢复）。
+插件删掉的会话不会回来（`forever`），或者还躺在回收站里等 30 天过期（默认路径）。
+
+## 已知边界
+
+- `$DSH_HOME/storages/schedule.json` 与 `message_feedback.json` 里可能残留指向已删会话的引用。
+  它们是宿主自己的 domain store，外部改写会被内存状态覆盖，本插件**不动**它们（见 `docs/decisions.md`）。
+- `$DSH_HOME/storages/session_projcache.json` 是 per-record 布局之前的旧聚合，实测早已停止写入
+  （mtime 远早于 `session_projcache/sessions/`）。插件只探测并在详情里标注，不写入。
+- 无头宿主没有文件管理器：设 `DSH_ARCHIVED_SESSIONS_OPENER=none`，「打开文件夹」只回路径不启动程序。

@@ -3,7 +3,7 @@
 
 The panel is client-side React: only a browser can prove the shipped settings
 page is really replaced (one nav row, not two), that the destructive buttons
-exist, and that clicking 彻底删除 deletes. This drives Chrome over CDP with a
+exist, and that clicking 删除 parks the session and 恢复最近一个 brings it back. This drives Chrome over CDP with a
 cookie minted from this machine's own session key, creates its own scratch
 session through the official RPCs, and then walks the UI.
 
@@ -222,9 +222,10 @@ def still_archived(session_id):
 
 
 def purge(session_id):
+    """Permanent delete, used for cleanup so a run never leaves a parked session."""
     from e2e import plugin_api
 
-    plugin_api("/api/dsh-archived-sessions/purge", "POST", {"sessionId": session_id},
+    plugin_api("/api/dsh-archived-sessions/delete", "POST", {"sessionId": session_id, "mode": "forever"},
                origin=False, extra={"sec-fetch-site": "same-origin"})
 
 
@@ -276,12 +277,13 @@ def main():
             )
         check("settings panel opened", bool(opened.get("ok")), json.dumps(opened, ensure_ascii=False))
 
-        # The page must REPLACE the shipped one: a leftover second entry shows up
-        # as a duplicate nav row, which is exactly how the shadowing bug surfaced.
-        nav_rows = cdp.evaluate(BUTTONS_WITH_TEXT % json.dumps("已归档会话"))
-        check("exactly one 已归档会话 nav row", nav_rows == 1, f"rows={nav_rows}")
+        # DSH 0.2.0-rc.2 ships no archived-sessions settings page, so this page
+        # is the only claimant of the cell. A second row would mean some host
+        # does still ship one and the shadowing priority stopped working.
+        nav_rows = cdp.evaluate(BUTTONS_WITH_TEXT % json.dumps("已归档"))
+        check("exactly one 已归档 nav row", nav_rows == 1, f"rows={nav_rows}")
 
-        nav = cdp.evaluate(CLICK_BY_TEXT % json.dumps("已归档会话"))
+        nav = cdp.evaluate(CLICK_BY_TEXT % json.dumps("已归档"))
         check("archived-sessions nav row found", bool(nav.get("ok")), json.dumps(nav, ensure_ascii=False))
 
         if "--dump" in sys.argv:
@@ -289,9 +291,10 @@ def main():
             return finish()
 
         panel = cdp.evaluate("document.body.innerText")
-        check("panel shows the permanent-delete action", "彻底删除" in panel)
-        check("panel shows the clear-all action", "清空全部" in panel)
+        check("panel shows the delete action", "删除" in panel)
+        check("panel shows the clear-all action", "删除全部" in panel)
         check("panel shows the per-row unarchive action", "取消归档" in panel)
+        check("panel shows the per-row details action", "详情" in panel)
         check("panel lists the scratch session", SCRATCH_TITLE in panel)
 
         # The row's disk footprint comes from the plugin's own GET /state — the exact
@@ -300,21 +303,23 @@ def main():
               wait_for(cdp, "document.body.innerText.includes('日志') || document.body.innerText.includes('仅索引')", timeout=15))
 
         count_js = ("[...document.querySelectorAll('button')]"
-                    ".filter((el) => el.textContent.trim() === '彻底删除' && el.offsetParent !== null).length")
+                    ".filter((el) => el.textContent.trim() === '删除' && el.offsetParent !== null).length")
         rows_before = cdp.evaluate(count_js)
 
-        clicked = cdp.evaluate(CLICK_BY_TEXT % json.dumps("彻底删除"))
+        clicked = cdp.evaluate(CLICK_BY_TEXT % json.dumps("删除"))
         check("row delete button is clickable", bool(clicked.get("ok")), json.dumps(clicked, ensure_ascii=False))
         check("inline confirmation appears before anything is deleted",
-              wait_for(cdp, "document.body.innerText.includes('删除后不可恢复')", timeout=10))
+              wait_for(cdp, "document.body.innerText.includes('删除后可在回收站恢复')", timeout=10))
+        check("the confirmation offers a separate permanent delete",
+              "永久删除" in cdp.evaluate("document.body.innerText"))
 
         confirmed = cdp.evaluate(CLICK_BY_TEXT % json.dumps("确认删除"))
         check("confirmation button is clickable", bool(confirmed.get("ok")), json.dumps(confirmed, ensure_ascii=False))
         check("success notice replaces the row",
-              wait_for(cdp, "document.body.innerText.includes('已彻底删除')", timeout=25))
+              wait_for(cdp, "document.body.innerText.includes('已删除')", timeout=25))
         check("the archived row is gone",
               wait_for(cdp, f"document.body.innerText.includes('暂无已归档会话') || "
-                            f"[...document.querySelectorAll('button')].filter((el) => el.textContent.trim() === '彻底删除' && el.offsetParent !== null).length < {rows_before}",
+                            f"[...document.querySelectorAll('button')].filter((el) => el.textContent.trim() === '删除' && el.offsetParent !== null).length < {rows_before}",
                        timeout=25))
 
         after = plugin_state()
@@ -322,15 +327,19 @@ def main():
               all(item["id"] != scratch for item in after.get("items", [])), json.dumps(after)[:160])
 
         directories, cache = artifacts_of(scratch)
-        if cache:
-            deadline = time.time() + 8
-            while time.time() < deadline and cache:
-                time.sleep(0.5)
-                directories, cache = artifacts_of(scratch)
-        check("session log directory deleted from disk", len(directories) == 0, str(directories))
-        check("projection cache deleted from disk", cache is False)
+        check("session log directory left the sessions tree", len(directories) == 0, str(directories))
+        check("the delete parked the session instead of unlinking it",
+              os.path.isdir(os.path.join(os.path.expanduser("~"), ".dsh", ".archived-sessions-quarantine", scratch)))
+        check("the panel now shows the recycle bin",
+              wait_for(cdp, "document.body.innerText.includes('回收站')", timeout=10))
 
-        print("deleted through the UI:", scratch)
+        # The undo has to work from the UI, not just from the API.
+        restored = cdp.evaluate(CLICK_BY_TEXT % json.dumps("恢复最近一个"))
+        check("recycle-bin restore is clickable", bool(restored.get("ok")), json.dumps(restored, ensure_ascii=False))
+        check("the restored session is listed again",
+              wait_for(cdp, f"document.body.innerText.includes({json.dumps(SCRATCH_TITLE)})", timeout=25))
+
+        print("deleted and restored through the UI:", scratch)
     finally:
         # Never leave the scratch session behind, however the run ended.
         if still_archived(scratch):
