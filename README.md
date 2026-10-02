@@ -54,16 +54,32 @@
 | POST | `/api/dsh-archived-sessions/purge` | `{ sessionId }` 彻底删除一个 |
 | POST | `/api/dsh-archived-sessions/purge-all` | 清空当前归档集合 |
 
-## 安装（web profile）
+## 安装
+
+### 从 npm（推荐）
 
 ```sh
-# 1) 让 profile 能解析到这个包（link: 指向本仓库的 plugin/）
-#    ~/.dsh/profiles/web/package.json
-#      "dependencies": { "dsh-archived-sessions-manager": "link:/path/to/plugin" }
-#      "dsh": { "profile": { "bundles": [ ..., "dsh-archived-sessions-manager" ] } }
-ln -s /path/to/plugin ~/.dsh/profiles/web/node_modules/dsh-archived-sessions-manager
+# 1) 装进 profile；包自带的 bundle patch 会把它挂上
+dsh plugin --profile web add dsh-archived-sessions-manager
 
 # 2) 关掉官方那一页（只靠 priority 遮蔽，导航里会留下两个同名入口）
+#    ~/.dsh/profiles/web/cordis.patch.yml
+#      - id: ui-settings-unarchive-sessions
+#        disabled: true
+
+# 3) 重启 dsh web
+```
+
+### 从源码（开发用）
+
+```sh
+# 1) 让 profile 能解析到这个包（link: 指向本仓库根目录）
+#    ~/.dsh/profiles/web/package.json
+#      "dependencies": { "dsh-archived-sessions-manager": "link:/path/to/repo" }
+#      "dsh": { "profile": { "bundles": [ ..., "dsh-archived-sessions-manager" ] } }
+ln -s /path/to/repo ~/.dsh/profiles/web/node_modules/dsh-archived-sessions-manager
+
+# 2) 同上：关掉官方那一页
 #    ~/.dsh/profiles/web/cordis.patch.yml
 #      - id: ui-settings-unarchive-sessions
 #        disabled: true
@@ -73,10 +89,10 @@ ln -s /path/to/plugin ~/.dsh/profiles/web/node_modules/dsh-archived-sessions-man
 #      - id: hmr
 #        config:
 #          root:
-#            - "/path/to/dsh-archived-sessions-manager"
+#            - "/path/to/repo"
 ```
 
-`dsh-hmr` 只监听 profile 清单与 patch 文件；改了 `lib/index.js` 想立即生效，需要把本目录加进 `hmr.config.root`。客户端半边改动刷新浏览器即可。
+`dsh-hmr` 只监听 profile 清单与 patch 文件；改了 `lib/index.js` 想立即生效，需要把本仓库根目录加进 `hmr.config.root`。客户端半边改动刷新浏览器即可。
 
 ## 测试
 

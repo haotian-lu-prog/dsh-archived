@@ -5,9 +5,9 @@
 
 ## 结构
 
-- `plugin/lib/index.js` — 宿主半边：三条路由（`/state`、`/purge`、`/purge-all`）、三处状态清理、删除后的延迟清扫
-- `plugin/lib/client.js` — 客户端半边：接管 `archived-sessions` 列表插槽、行内二次确认、「清空全部」
-- `plugin/cordis.patch.yml` — profile patch，用来 `disabled: true` 关掉官方 `ui-settings-unarchive-sessions`
+- `lib/index.js` — 宿主半边：三条路由（`/state`、`/purge`、`/purge-all`）、三处状态清理、删除后的延迟清扫
+- `lib/client.js` — 客户端半边：接管 `archived-sessions` 列表插槽、行内二次确认、「清空全部」
+- `cordis.patch.yml` — bundle patch：把插件 `insert` 进 profile；关掉官方 `ui-settings-unarchive-sessions` 仍需在 profile patch 里手动加一行
 - `tools/e2e.py` — 宿主端到端（15 项）：建临时会话 → 归档 → 走 HTTP 删除 → 校验三处状态
 - `tools/client-smoke.mjs` — 客户端冒烟（13 项）：桩 React 加载 `client.js`
 - `tools/browser-acceptance.py` — 真浏览器验收（17 项，纯标准库 CDP：自己实现 WebSocket 握手与帧）
@@ -37,4 +37,4 @@ AI 代理改完代码至少跑前两套；动了渲染/接管逻辑要跑第三�
 
 - 开工先读 `HANDOFF.md`，收工更新它（当前状态 / 下一步 / 未决问题）并提交。
 - 不提交 `tools/__pycache__/`（已在 `.gitignore`）。
-- 这个仓库是私有插件（`plugin/package.json` 里 `"private": true`），安装方式是 `link:` 软链 + profile patch，改动不需要发版。
+- 包就在仓库根目录（`package.json` + `lib/` + `cordis.patch.yml`），已发布到 npm；改完代码要发版才有新版本。
