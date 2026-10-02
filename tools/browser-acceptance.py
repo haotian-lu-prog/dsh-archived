@@ -235,6 +235,12 @@ def artifacts_of(session_id):
     return locate(session_id)
 
 
+def button_count(cdp, label):
+    """Visible buttons whose trimmed text is exactly this label."""
+    return cdp.evaluate("[...document.querySelectorAll('button')]"
+                        f".filter((el) => el.textContent.trim() === {json.dumps(label)} && el.offsetParent !== null).length")
+
+
 def wait_for(cdp, expression, timeout=30, interval=0.5):
     deadline = time.time() + timeout
     while time.time() < deadline:
@@ -290,12 +296,19 @@ def main():
             print("visible interactive text:", json.dumps(cdp.evaluate(VISIBLE_TEXT), ensure_ascii=False, indent=1))
             return finish()
 
+        # The panel loads its rows from the host route, so the assertions wait
+        # for the row to land instead of racing the first paint.
+        check("panel lists the scratch session",
+              wait_for(cdp, f"document.body.innerText.includes({json.dumps(SCRATCH_TITLE)})", timeout=30))
         panel = cdp.evaluate("document.body.innerText")
-        check("panel shows the delete action", "删除" in panel)
-        check("panel shows the clear-all action", "删除全部" in panel)
-        check("panel shows the per-row unarchive action", "取消归档" in panel)
-        check("panel shows the per-row details action", "详情" in panel)
-        check("panel lists the scratch session", SCRATCH_TITLE in panel)
+        check("panel shows the per-row delete action", button_count(cdp, "删除") >= 1)
+        check("panel shows the clear-all action",
+              cdp.evaluate("[...document.querySelectorAll('button')]"
+                           ".filter((el) => el.textContent.trim().startsWith('删除全部') && el.offsetParent !== null).length") >= 1)
+        check("panel shows the per-row unarchive action", button_count(cdp, "取消归档") >= 1)
+        check("panel shows the per-row details action", button_count(cdp, "详情") >= 1)
+        check("panel shows the per-row open-folder action", button_count(cdp, "打开文件夹") >= 1)
+        check("panel is labelled 已归档", "已归档" in panel)
 
         # The row's disk footprint comes from the plugin's own GET /state — the exact
         # request shape a browser sends (no Origin on a same-origin GET).
@@ -328,8 +341,10 @@ def main():
 
         directories, cache = artifacts_of(scratch)
         check("session log directory left the sessions tree", len(directories) == 0, str(directories))
+        from e2e import dsh_home
+
         check("the delete parked the session instead of unlinking it",
-              os.path.isdir(os.path.join(os.path.expanduser("~"), ".dsh", ".archived-sessions-quarantine", scratch)))
+              os.path.isdir(os.path.join(dsh_home(), ".archived-sessions-quarantine", scratch)))
         check("the panel now shows the recycle bin",
               wait_for(cdp, "document.body.innerText.includes('回收站')", timeout=10))
 
