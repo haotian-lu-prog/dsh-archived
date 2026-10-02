@@ -5,29 +5,31 @@
 
 ## 当前写者
 
-- 工具：（空 —— 2026-09-23 02:10 DSH 会话收工）
+- 工具：DSH（2026-10-02 上架 npm + 投稿 dsh market）
 - 分支：main
-- 开始时间：—
+- 开始时间：2026-10-02 15:55
 
 > 一个仓库同一时刻只允许一个写者；下一位开工时把上一行改成自己。
 
-## 当前状态（2026-09-23 核对）
+## 当前状态（2026-10-02）
 
-- 功能完整：宿主 `plugin/lib/index.js`（389 行）+ 客户端 `plugin/lib/client.js`（592 行）+ patch
-- 测试齐全（以工具头部的项目数为准）：
-  - `python3 tools/e2e.py` —— 宿主 15 项（完整删除链路、三种拒绝码、四种请求信任形态）
-  - `node tools/client-smoke.mjs` —— 客户端 13 项
-  - `python3 tools/browser-acceptance.py` —— 真浏览器 17 项（需先起无头 Chrome，`--remote-debugging-port=9333`）
-- 2026-09-22 首次入库（此前只有工作副本、没有版本控制）；2026-09-23 补 `AGENTS.md`、本文件、`.github/workflows/conventions.yml`
-- 远端：`haotian-lu-prog/dsh-archived-sessions-manager`（私库），`main` 与 `origin/main` 一致
+- **包已从 `plugin/` 上移到仓库根目录**：根 `package.json` 同时是 npm 清单与仓库清单，`README.md` / `LICENSE` 一处维护、GitHub 与 npm tarball 两处可见。取舍见 `docs/decisions.md`；合并于 PR #2（squash `2103398`）。
+- **已发布 npm**：`dsh-archived-sessions-manager@0.1.0`（MIT，public）
+  安装：`dsh plugin --profile web add dsh-archived-sessions-manager`
+  功能与布局改动前一致，只动了清单与目录，`lib/` 两个文件未改一行。
+- **已投稿 catalog**：[awesome-dsh-plugin#6375](https://github.com/awesome-dsh-plugin/awesome-dsh-plugin/pull/6375) —— 一个数据文件 `data/plugins/haotian-lu-prog__dsh-archived-sessions-manager.yml`，分类 `session`。目录 README 由脚本从 `data/plugins/*.yml` 生成，**不要手工编辑**。
+- **仓库已改为 public**（catalog CI 与市场前端都匿名读仓库），topics：`dsh-plugin` / `deepseek-harness` / `dsh` / `cordis` / `sessions`。
+- `package.json` 变更：去掉 `private`；补 `repository` / `homepage` / `bugs` / `keywords` / `author` / `publishConfig`；官方 `@deepseek-ai/*` 全部改为 **optional peerDependencies**（`^0.2.0-rc.1`，cordis `^4.0.4`），host 已有的包不会被 pnpm 再装一份。
+- 三套测试未改动，且都不引用包路径（`tools/` 里 grep 不到 `plugin/`），因此布局调整不影响它们。
 
 ## 下一步
 
-- [x] ~~`tools/e2e.py` 的 `WORKSPACE` 硬编码 iCloud 路径~~ → **已修（2026-09-23）**：解析顺序 `--workspace` > `$DSH_E2E_WORKSPACE` > 当前目录；`--print-workspace` 可在不碰 DSH 的情况下查看解析结果；路径不存在时退出 2 并给出提示。注意 `--print-workspace` 与真正跑测试走同一套校验。
-- [ ] 浏览器验收依赖手动起 Chrome 调试端口；若以后想上 CI，只把前两套（无需浏览器）放进 workflow
-- [ ] `plugin/package.json` 是 `"private": true`；哪天要发布到 npm，需要补版本策略与 `files`
+- [ ] 市场录入后核对详情页：npm 版本、安装命令（`dsh plugin --profile web add dsh-archived-sessions-manager`）、分类与描述是否与实际一致。
+- [ ] 官方 `ui-settings-unarchive-sessions` 的 `disabled: true` 仍需用户在 profile patch 里自己加一行（否则导航里两个同名入口）。**未验证**能否放进本包自带的 bundle patch——bundles 层跨包 id 定位不确定；若能验证可行，安装就能压成一步。
+- [ ] 浏览器验收依赖手动起 Chrome 调试端口；若以后想上 CI，只把前两套（无需浏览器）放进 workflow。
+- [ ] 发版：改根 `package.json` 的 `version` → `npm publish` → catalog 的 `version` 由上游 CI 自动刷新。
 
 ## 未决问题
 
-- 是否发布到 npm？（当前安装方式是 `link:` 软链 + profile patch，够用但不利于别人复用）
 - 官方 DSH 若自行加上「彻底删除」，本插件是否退役、还是继续接管？（接管逻辑依赖 `priority: -1` + `disabled: true` 两步，官方改动会影响它）
+- **提交身份**：仓库已 public，而全局 `user.email` 是 iCloud 地址，GitHub 的 email privacy 会直接拒收推送。本仓库的提交用 `49531320+haotian-lu-prog@users.noreply.github.com`（`git -c user.email=... commit`），或改用 SSH remote。
