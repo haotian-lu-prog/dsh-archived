@@ -1,0 +1,296 @@
+#!/usr/bin/env node
+/**
+ * Host-half smoke test — no DSH, no browser, no network.
+ *
+ * Points $DSH_HOME at a temp directory, builds the three pieces of state one
+ * archived session owns, then drives the plugin's own route handlers with fake
+ * request/response pairs and asserts what survived. This is the suite that can
+ * run in CI; tools/e2e.py is the one that proves it against a live host.
+ *
+ *     node tools/host-smoke.mjs
+ */
+
+import { mkdtempSync, mkdirSync, writeFileSync, existsSync, readFileSync, rmSync, readdirSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { dirname } from "node:path";
+import { fileURLToPath } from "node:url";
+
+const here = dirname(fileURLToPath(import.meta.url));
+const home = mkdtempSync(join(tmpdir(), "dasm-home-"));
+process.env.DSH_HOME = home;
+process.env.DSH_ARCHIVED_SESSIONS_OPENER = "none";
+
+const failures = [];
+function check(label, condition, detail = "") {
+  const mark = condition ? "PASS" : "FAIL";
+  console.log(`[${mark}] ${label}${detail ? ` — ${detail}` : ""}`);
+  if (!condition) failures.push(label);
+}
+
+const HEADER = "x-dsh-archived-sessions";
+const ids = {
+  withArtifact: "session-11111111-1111-4111-8111-111111111111",
+  indexOnly: "session-22222222-2222-4222-8222-222222222222",
+  running: "session-33333333-3333-4333-8333-333333333333",
+  withChild: "session-44444444-4444-4444-8444-444444444444",
+  child: "session-55555555-5555-4555-8555-555555555555",
+  gone: "session-66666666-6666-4666-8666-666666666666",
+  cacheOnly: "session-88888888-8888-4888-8888-888888888888",
+};
+const bucket = "--Users-test-project--";
+
+function seedArtifact(sessionId, bytes = 2048) {
+  const path = join(home, "sessions", bucket, sessionId);
+  mkdirSync(path, { recursive: true });
+  writeFileSync(join(path, "session.v4.jsonl.zstd"), Buffer.alloc(bytes, 7));
+  writeFileSync(join(path, "session.lock"), "");
+  return path;
+}
+
+function seedCache(sessionId, title) {
+  const path = join(home, "storages", "session_projcache", "sessions");
+  mkdirSync(path, { recursive: true });
+  writeFileSync(
+    join(path, sessionId + ".json"),
+    JSON.stringify({
+      version: 3,
+      record: { identity: { formatVersion: 4, createdAt: 1_700_000_000_000, cwd: "/Users/test/project" }, rows: { title: { ver: 1, seq: 1, val: title } } },
+    }),
+  );
+}
+
+function seedWorkspaceStore(archived) {
+  const path = join(home, "storages");
+  mkdirSync(path, { recursive: true });
+  writeFileSync(join(path, "workspace.json"), JSON.stringify({ unit: { name: "workspace" }, global: { archivedSessionIds: archived }, tables: {} }));
+  writeFileSync(
+    join(path, "session_projcache.json"),
+    JSON.stringify({ unit: { name: "session_projcache", version: 3 }, global: null, tables: { sessions: { [ids.withArtifact]: { identity: {} } } } }),
+  );
+}
+
+seedArtifact(ids.withArtifact);
+seedCache(ids.withArtifact, "重构归档页");
+// index-only: the archive set names it, nothing else does.
+// cache-only: its log is gone but the projection document survived.
+seedCache(ids.cacheOnly, "只剩缓存的会话");
+seedArtifact(ids.running, 1024);
+seedCache(ids.running, "正在跑的会话");
+seedArtifact(ids.withChild, 512);
+seedCache(ids.withChild, "有子会话的父会话");
+seedCache(ids.child, "子会话");
+seedWorkspaceStore([ids.withArtifact, ids.indexOnly, ids.running, ids.withChild, ids.child, ids.cacheOnly]);
+
+// An already-parked session that is older than the retention window: the
+// startup sweep must drop it without anyone asking.
+const stale = "session-77777777-7777-4777-8777-777777777777";
+mkdirSync(join(home, ".archived-sessions-quarantine", stale, "session"), { recursive: true });
+writeFileSync(join(home, ".archived-sessions-quarantine", stale, "session", "old.zstd"), "x");
+writeFileSync(
+  join(home, ".archived-sessions-quarantine", stale, "meta.json"),
+  JSON.stringify({ sessionId: stale, deletedAt: Date.now() - 40 * 24 * 60 * 60 * 1000, bytes: 1 }),
+);
+
+// --- fake host context -------------------------------------------------------
+const routes = new Map();
+const archived = new Set([ids.withArtifact, ids.indexOnly, ids.running, ids.withChild, ids.child, ids.cacheOnly]);
+const unarchiveCalls = [];
+const archiveCalls = [];
+const registry = {
+  get archivedSessionIds() {
+    return [...archived];
+  },
+  async unarchiveSession(sessionId) {
+    unarchiveCalls.push(sessionId);
+    archived.delete(sessionId);
+  },
+  async archiveSession(sessionId) {
+    archiveCalls.push(sessionId);
+    archived.add(sessionId);
+  },
+};
+const headersOf = {
+  [ids.withChild]: { id: ids.withChild, origin: "root" },
+  [ids.child]: { id: ids.child, origin: "subagent", parentSession: ids.withChild },
+};
+const ctx = {
+  logger: { info() {}, warn() {}, debug() {} },
+  effect(fn) {
+    fn();
+  },
+  get: (name) => (name === "workspaceRegistry" ? registry : undefined),
+  webServer: {
+    register(route) {
+      routes.set(route.path, route);
+    },
+  },
+  workspaceRegistry: registry,
+  sessions: { get: (sessionId) => (headersOf[sessionId] ? { header: headersOf[sessionId] } : undefined) },
+  agents: {
+    get: (sessionId) => (sessionId === ids.running ? { id: sessionId, status: "running" } : undefined),
+    list: () => [
+      { id: ids.running, status: "running", session: { header: headersOf[ids.running] ?? { id: ids.running, origin: "root" } } },
+      { id: ids.child, status: "running", session: { header: headersOf[ids.child] } },
+      { id: ids.withArtifact, status: "idle", session: { header: { id: ids.withArtifact, origin: "root" } } },
+    ],
+  },
+};
+
+const plugin = await import(join(here, "..", "lib", "index.js"));
+plugin.apply(ctx);
+
+// --- fake http -----------------------------------------------------------------
+function makeRequest({ method = "GET", body, headers = {}, remoteAddress = "127.0.0.1" } = {}) {
+  const payload = body === undefined ? null : Buffer.from(JSON.stringify(body));
+  return {
+    method,
+    headers: { host: "127.0.0.1:3080", "sec-fetch-site": "same-origin", [HEADER]: "1", ...headers },
+    socket: { remoteAddress },
+    async *[Symbol.asyncIterator]() {
+      if (payload !== null) yield payload;
+    },
+  };
+}
+function makeResponse() {
+  const captured = { status: 0, body: null };
+  return {
+    captured,
+    writeHead(status) {
+      captured.status = status;
+    },
+    end(text) {
+      captured.body = JSON.parse(text);
+    },
+  };
+}
+async function call(path, options) {
+  const route = routes.get(path);
+  if (route === undefined) throw new Error("no route " + path);
+  const response = makeResponse();
+  await route.handler(makeRequest(options), response);
+  return { status: response.captured.status, body: response.captured.body };
+}
+
+const P = "/api/dsh-archived-sessions";
+const artifactOf = (id) => join(home, "sessions", bucket, id);
+const cacheOf = (id) => join(home, "storages", "session_projcache", "sessions", id + ".json");
+
+// --- route shape ----------------------------------------------------------------
+check("registers six routes", routes.size === 6, [...routes.keys()].join(", "));
+
+// --- state ----------------------------------------------------------------------
+const state = await call(P + "/state");
+check("GET /state answers the panel's api version", state.status === 200 && state.body.apiVersion === 2, String(state.body.apiVersion));
+const byId = Object.fromEntries(state.body.items.map((item) => [item.id, item]));
+check("state lists every archived id", state.body.items.length === 6, String(state.body.items.length));
+check("row title comes from the projection cache", byId[ids.withArtifact].title === "重构归档页", String(byId[ids.withArtifact].title));
+check("row reports the artifact size", byId[ids.withArtifact].artifact.present === true && byId[ids.withArtifact].artifact.bytes > 2000, JSON.stringify(byId[ids.withArtifact].artifact));
+check("index-only residue still gets a row", byId[ids.indexOnly].indexOnly === true && byId[ids.indexOnly].title === null, JSON.stringify(byId[ids.indexOnly]));
+check("cache-only residue is distinguished from index-only", byId[ids.cacheOnly].cacheOnly === true && byId[ids.cacheOnly].indexOnly === false && byId[ids.cacheOnly].title === "只剩缓存的会话", JSON.stringify(byId[ids.cacheOnly]));
+check("running sessions are flagged, not hidden", byId[ids.running].running === true);
+check("subagent lineage is exposed on the parent", byId[ids.withChild].children.includes(ids.child), JSON.stringify(byId[ids.withChild].children));
+check("legacy aggregate membership is reported", byId[ids.withArtifact].legacyRow === true && state.body.legacy.rows >= 1, JSON.stringify(state.body.legacy));
+check("stale quarantine entry expired at load", existsSync(join(home, ".archived-sessions-quarantine", stale)) === false);
+
+// --- trust ------------------------------------------------------------------------
+const noMarker = await call(P + "/state", { headers: { [HEADER]: undefined } });
+check("missing marker header is refused", noMarker.status === 403, String(noMarker.status));
+const crossOrigin = await call(P + "/state", { headers: { origin: "http://evil.example" } });
+check("cross-origin Origin is refused", crossOrigin.status === 403, String(crossOrigin.status));
+const noSignal = await call(P + "/state", { headers: { "sec-fetch-site": undefined } });
+check("no same-origin signal is refused", noSignal.status === 403, String(noSignal.status));
+const wrongMethod = await call(P + "/delete", { method: "GET" });
+check("wrong method is refused", wrongMethod.status === 405, String(wrongMethod.status));
+
+// --- refusals ----------------------------------------------------------------------
+const badId = await call(P + "/delete", { method: "POST", body: { sessionId: "nope" } });
+check("invalid id is refused", badId.body.error === "invalid-session-id", JSON.stringify(badId.body));
+const notArchived = await call(P + "/delete", { method: "POST", body: { sessionId: ids.gone } });
+check("unarchived id is refused", notArchived.body.error === "not-archived", JSON.stringify(notArchived.body));
+const running = await call(P + "/delete", { method: "POST", body: { sessionId: ids.running } });
+check("running session is refused", running.body.error === "session-running", JSON.stringify(running.body));
+const parent = await call(P + "/delete", { method: "POST", body: { sessionId: ids.withChild } });
+check("running subagent blocks the parent delete", parent.body.error === "subagent-running", JSON.stringify(parent.body));
+
+// --- quarantine round trip ----------------------------------------------------------
+const deleted = await call(P + "/delete", { method: "POST", body: { sessionId: ids.withArtifact } });
+check("delete parks the session", deleted.body.ok === true && deleted.body.mode === "quarantine", JSON.stringify(deleted.body).slice(0, 120));
+check("artifact directory left the sessions tree", existsSync(artifactOf(ids.withArtifact)) === false);
+check("projection cache left the cache dir", existsSync(cacheOf(ids.withArtifact)) === false);
+check("archive index entry was cleared through the registry", unarchiveCalls.includes(ids.withArtifact) && archived.has(ids.withArtifact) === false);
+const parked = await call(P + "/state");
+check("state reports the recycle bin", parked.body.quarantine.count === 1 && parked.body.quarantine.bytes > 2000, JSON.stringify(parked.body.quarantine.count));
+const revealParked = await call(P + "/reveal", { method: "POST", body: { sessionId: ids.withArtifact } });
+check("reveal follows a parked session into the recycle bin",
+  revealParked.body.ok === true && revealParked.body.where === "quarantine" && revealParked.body.opener === "none",
+  JSON.stringify(revealParked.body).slice(0, 160));
+
+// A lingering idle agent rewrites its cache once after the delete; the sweep
+// scheduled by the delete has to remove that residue.
+mkdirSync(dirname(cacheOf(ids.withArtifact)), { recursive: true });
+writeFileSync(cacheOf(ids.withArtifact), "{}");
+await new Promise((resolve) => setTimeout(resolve, 3400));
+check("post-delete sweep removes rewritten residue", existsSync(cacheOf(ids.withArtifact)) === false);
+
+// --- restore ------------------------------------------------------------------------
+const restored = await call(P + "/restore", { method: "POST", body: { sessionId: ids.withArtifact } });
+check("restore succeeds and re-archives", restored.body.ok === true && restored.body.restored.rearchived === true, JSON.stringify(restored.body).slice(0, 140));
+check("restore put the log directory back", existsSync(join(artifactOf(ids.withArtifact), "session.v4.jsonl.zstd")));
+check("restore put the cache document back", existsSync(cacheOf(ids.withArtifact)));
+check("restored id is archived again", archived.has(ids.withArtifact) === true && archiveCalls.includes(ids.withArtifact));
+const restoreAgain = await call(P + "/restore", { method: "POST", body: { sessionId: ids.withArtifact } });
+check("restoring a live session is refused", restoreAgain.body.error === "not-quarantined", JSON.stringify(restoreAgain.body));
+
+const revealRestored = await call(P + "/reveal", { method: "POST", body: { sessionId: ids.withArtifact } });
+check("reveal answers a path with the opener suppressed",
+  revealRestored.body.ok === true && revealRestored.body.opener === "none" && revealRestored.body.where === "sessions",
+  JSON.stringify(revealRestored.body).slice(0, 160));
+
+// --- permanent delete ----------------------------------------------------------------
+const forever = await call(P + "/delete", { method: "POST", body: { sessionId: ids.withArtifact, mode: "forever" } });
+check("delete forever reports the mode", forever.body.ok === true && forever.body.mode === "forever", JSON.stringify(forever.body).slice(0, 120));
+check("delete forever unlinks the directory", existsSync(artifactOf(ids.withArtifact)) === false);
+const binAfterForever = await call(P + "/state");
+check("delete forever leaves nothing parked", binAfterForever.body.quarantine.count === 0, String(binAfterForever.body.quarantine.count));
+
+// --- index-only residue and batch delete ------------------------------------------------
+const batch = await call(P + "/delete-all", { method: "POST", body: { ids: [ids.indexOnly, ids.running], mode: "quarantine" } });
+check("batch delete reports per-id results", batch.body.results.length === 2, JSON.stringify(batch.body.results).slice(0, 160));
+check("batch skips the running session and clears the residue", batch.body.results.find((r) => r.sessionId === ids.indexOnly).ok === true && batch.body.results.find((r) => r.sessionId === ids.running).error === "session-running");
+const afterBatch = await call(P + "/state");
+check("an index-only cleanup parks nothing", afterBatch.body.quarantine.count === 0, JSON.stringify(afterBatch.body.quarantine.count));
+
+const parkedCacheOnly = await call(P + "/delete", { method: "POST", body: { sessionId: ids.cacheOnly } });
+check("a cache-only session is recoverable", parkedCacheOnly.body.ok === true && parkedCacheOnly.body.removed.parked === true, JSON.stringify(parkedCacheOnly.body).slice(0, 140));
+
+// --- reveal and empty ---------------------------------------------------------------------
+const revealMissing = await call(P + "/reveal", { method: "POST", body: { sessionId: ids.gone } });
+check("reveal refuses an unknown session", revealMissing.body.error === "no-artifact", JSON.stringify(revealMissing.body));
+
+const emptied = await call(P + "/empty-quarantine", { method: "POST", body: {} });
+check("emptying the recycle bin reports what it freed", emptied.body.ok === true && emptied.body.purged === 1, JSON.stringify(emptied.body));
+check("emptying the bin frees the parked bytes", emptied.body.bytes > 0, String(emptied.body.bytes));
+check("recycle bin directory is gone", readdirSync(join(home, ".archived-sessions-quarantine")).length === 0);
+
+// --- capability probe ---------------------------------------------------------------------
+const routesWithout = routes.size;
+const blind = { ...ctx, workspaceRegistry: { get archivedSessionIds() { return [ids.indexOnly]; } }, get: () => undefined };
+const blindRoutes = new Map();
+blind.webServer = { register: (route) => blindRoutes.set(route.path, route) };
+delete blind.get;
+const blindPlugin = await import(join(here, "..", "lib", "index.js") + "?blind");
+blindPlugin.apply(blind);
+const blindResponse = makeResponse();
+await blindRoutes.get(P + "/delete").handler(makeRequest({ method: "POST", body: { sessionId: ids.indexOnly } }), blindResponse);
+check("a host without the registry API refuses instead of half-deleting", blindResponse.captured.body.error === "no-registry", JSON.stringify(blindResponse.captured.body));
+check("the primary host was untouched by that probe", routes.size === routesWithout);
+
+rmSync(home, { recursive: true, force: true });
+
+console.log();
+if (failures.length > 0) {
+  console.log(`${failures.length} check(s) failed: ${failures.join(", ")}`);
+  process.exit(1);
+}
+console.log("all checks passed");

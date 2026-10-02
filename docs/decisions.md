@@ -6,13 +6,62 @@
 
 **选项**
 
-1. 保持 `plugin/` 子目录，catalog 条目用 monorepo 形态：`url` 指到 `/tree/main/plugin`，`name` 写 `owner/repo#plugin`，文件名 `owner__repo--plugin.yml`。
+1. 保持 `plugin/` 子目录，catalog 条目用 monorepo 形态：`url` 指到 `/tree/main/plugin`，`name` 写 `owner/repo#plugin`。
 2. 把包上移到仓库根目录，catalog 条目用普通形态：`url` = 仓库根，`name` = `owner/repo`。
 
-**取舍**：方案 1 改动最小，但 npm 只从**包根**取 README/LICENSE，所以 `plugin/` 里得再放一份，同一份内容两处维护；方案 2 会动目录结构，但根 `README.md` / `LICENSE` 同时服务 GitHub 与 npm tarball，且与本账号的 `dsh-notifications` 布局一致。
+**取舍**：方案 1 改动最小，但 npm 只从**包根**取 README/LICENSE，所以 `plugin/` 里得再放一份；方案 2 会动目录结构，但根 `README.md` / `LICENSE` 同时服务 GitHub 与 npm tarball，且与本账号的 `dsh-notifications` 布局一致。
 
-**结论**：选方案 2。动手前核查过三件事——`tools/` 与 `.github/` 都不引用 `plugin/` 路径；插件当时没有装进任何 profile（不存在会断的 `link:` 软链）；仓库工作树干净。
+**结论**：选方案 2。动手前核查过三件事——`tools/` 与 `.github/` 都不引用 `plugin/` 路径；插件当时没有装进任何 profile；仓库工作树干净。
 
 ## 2026-10-02 · 仓库由 private 改为 public
 
 catalog 的 CI（`scripts/check-submission.mjs`）与 dsh-market 前端都以**匿名**身份读仓库来校验 `dsh.bundle`、抓 README / 截图，私库一律 404。发 npm 不需要公开仓库，但进目录必须公开。改公开前确认过仓库里没有密钥：`tools/rpc.py` 只在运行时读 `~/.dsh/.credentials.yaml`，没有任何内嵌凭据。
+
+## 2026-10-02 · 0.2.0 重构：从「接管官方页」改成「一等 Archived 设置页」
+
+**背景**：0.2.0-rc.2 上，官方包 `dsh-client-ui-settings-unarchive-sessions` **已经不存在**（290 个 `@deepseek-ai` 包里没有任何名字含 `archiv` 的包）。原来的两大前提——同 id 遮蔽 + profile patch 里 `disabled: true`——都成了空转；而 `settings.section` 的 `archived-sessions` id 在 0.2.0-rc.2 上是空的（官方只占 `account/general/models/plugins/agent-presets`）。
+
+**结论**：改成普通注册，安装即出现；删除 profile patch 那一步。`priority: -1` 保留，作为对「还带官方页的旧宿主」的防御。同时**放弃 0.1.x**：`peerDependencies` 收敛到 `^0.2.0-rc.1`。
+
+## 2026-10-02 · 删除默认进回收站，`forever` 才是不可逆
+
+**背景**：原实现是 `rm -rf` + 清索引，一步到位且不可撤销。而三条独立证据都指向同一件事——不可逆才是风险点：
+`/recycle-bin` skill 把「先备份、后删除」写成了硬规则；TOBYCAI/dsh-sessions-manager 与 dream12347/dsh-session-manager 都做软删进回收站；Codex 的 `thread/archive` 与 `codex delete` 是**两条命令、两套确认**，从不混用。
+
+**选项**
+
+1. 保持不可逆删除，只在确认文案上加强。
+2. 默认进隔离区（30 天 / 可恢复），并保留一个显式的「永久删除」。
+
+**取舍**：方案 1 更简单、也更符合插件名里的「彻底删除」；但它把用户唯一无法挽回的操作放在了一次点击之后，而三家参考实现都刻意避开了这一点。方案 2 多一个状态、多一个过期策略，但把「误删」从灾难降级成麻烦。
+
+**结论**：选方案 2。隔离区在 `$DSH_HOME/.archived-sessions-quarantine/`（与 `sessions/` 同卷，移动是 `rename`），
+面板常显「回收站 N 个 · X MB」并提供恢复 / 清空；30 天后自动清除。**回退成本很低**：`mode` 字段已经把两条路径分开，
+删掉隔离区分支即可回到方案 1。
+
+## 2026-10-02 · 归档列表的事实源移到宿主
+
+**背景**：原客户端用 `props.useSessions` 的摘要建行，拿不到摘要就 `continue` 丢行，全丢时显示「这里没有可恢复的已归档会话」。
+于是「归档索引里还留着、磁盘上已经什么都没有」的残留**在界面上根本不存在**，用户也就无从清起——`/recycle-bin` skill 里「63 条索引、52 条无数据残留」正是这个形态。
+
+**结论**：行的唯一事实源改成宿主路由 `GET /state`（归档集合 + 磁盘 + 投影缓存文档），浏览器摘要只用来**增强**标题与时间。
+投影缓存文档实测带 `record.rows.title.val` 与 `record.identity.{createdAt, cwd, formatVersion}`，足够画一行。
+`tools/client-smoke.mjs` 有两条断言盯这个回归（index-only 行必须渲染、只有宿主知道标题的行必须用宿主标题）。
+
+## 2026-10-02 · 三个参考插件的功能取舍
+
+**采纳**：回收站（TOBYCAI / dream12347）、批量勾选、血缘（父/子会话）、按工作区分组、搜索含会话 ID、打开记录文件夹（Zephyr-vibe）、
+「能力不可验证就不要开放操作」（TOBYCAI `src/compat/capabilities.js` → `lib/index.js` 的 `hostSupportsDelete` + `tools/compat-check.mjs`）。
+
+**忽略**：收藏 / 标签 / 保存筛选 / 自动归档 / 跨工作区移动（TOBYCAI）、未读标记 / fork / 统计弹窗 / 上下文压缩阈值（dream12347）、
+双标签页（Zephyr-vibe）、解析 zstd 会话日志。
+
+**理由**：这些属于「会话管理器」而不是「归档页」。TOBYCAI 为此维护了十来个自建索引（star-index / tag-index / saved-filters / lineage / zstd-frame …），
+把它们搬进来只会得到一个维护成本高、定位模糊的低配版；本插件保持「只管归档区」的窄边界。
+
+## 2026-10-02 · `/recycle-bin` skill 保留，但不把它的手工机制搬进插件
+
+skill 的价值在于「插件没装 / 宿主起不来」时仍能清理，以及它写下来的安全纪律（先备份、只动归档 id、事后核对其他会话数量）。
+但它的实现方式——自签 cookie 调 RPC、必要时手改 `workspace.json`——在插件里是**倒退**：插件跑在宿主进程内，
+直接 `ctx.workspaceRegistry.unarchiveSession()` 就能拿到官方广播，而 skill 自己也写明手改会被内存状态覆盖。
+**结论**：skill 保留为兜底路径，在 SKILL.md 里注明「装了插件优先走 UI」；纪律部分（备份→删除→核对）吸收成隔离区 + e2e 断言。
