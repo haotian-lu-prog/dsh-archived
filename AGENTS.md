@@ -6,7 +6,7 @@ DSH 的「设置 → 已归档」页：逐条 / 批量删除已归档会话，�
 
 ## 结构
 
-- `lib/index.js` — 宿主半边入口：能力探测 + 六条路由的装配
+- `lib/index.js` — 宿主半边入口：能力探测 + 六条路由（同时注册在当前与旧的 `/api/dsh-archived-sessions` 前缀下）
 - `lib/host/paths.js` — `$DSH_HOME` 解析、三处状态的路径推导、遗留聚合探测
 - `lib/host/metadata.js` — 从投影缓存文档读标题/创建时间/cwd、血缘、旧聚合行
 - `lib/host/quarantine.js` — 回收站：park / restore / purge / 过期
@@ -55,8 +55,13 @@ AI 代理改完代码**至少跑 `npm test`**；动了路由/删除流水线要�
   那正是「清不掉的残留」产生的原因，client-smoke 有一条断言专门盯这个回归。
 - 删除后的 +3s / +15s / +60s 清扫**只删投影缓存文档**，且要求「该 id 不在归档集合、没在跑、磁盘上没有会话目录」。
   日志目录不会复活；目录回来了说明会话被恢复了，绝不能动。
-- 路由信任：仅回环 + 同源。`Origin` 存在时必须与 Host 匹配；浏览器同源 GET 不带 `Origin`，
-  由 `sec-fetch-site: same-origin` 兜底；两个信号都没有则拒绝。还要校验标头 `x-dsh-archived`。
+- 路由信任：**仅回环 + 非跨站**。`Origin` / `sec-fetch-site` 只要出现就是权威、且**不能被标头推翻**：
+  `Origin` 与 Host 不符、或 `sec-fetch-site` 不是 `same-origin`，一律拒绝。两者都**没有**时才要求标头
+  `x-dsh-archived`——桌面应用经过自己的请求管线时可能既没有 Fetch Metadata 也没有自定义标头，
+  早期版本要求二者齐备，于是把桌面应用的正当代调用拒了（见 `docs/decisions.md`）。
+  旧标头 `x-dsh-archived-sessions` 与旧路由前缀仍然接受，用于让改名时已打开的标签页不必刷新。
+- 被拒的请求要**留下证据**：`/state` 会带上最近 20 条 `refusals`（含 host/origin/site/marker）。
+  「403 但不留痕」正是上一次排查耗掉一整轮的原因，别再把它删掉。
 - **DSH 0.2.0-rc.2 没有官方归档设置页**（`dsh-client-ui-settings-unarchive-sessions` 这个包不存在），
   `settings.section` 的 `archived-sessions` id 是空的，所以不需要任何 profile patch。
   `priority: -1` 只是对「还带官方页的旧宿主」的防御，别删。

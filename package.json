@@ -1,6 +1,6 @@
 {
   "name": "dsh-archived",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "Archived-sessions page for DeepSeek Harness: per-row and batch deletion that clears the session log, the projection cache and the archive index together, with a 30-day recycle bin, subagent-aware refusals and a per-row disk footprint.",
   "type": "module",
   "main": "lib/index.js",

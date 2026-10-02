@@ -104,3 +104,20 @@ profile patch 里 `disabled: true`）全部空转。而 `settings.section` 的 `
 - **有意保留**：回收站目录 `$DSH_HOME/.archived-sessions-quarantine/`、设置页插槽 id `archived-sessions`（DSH 官方 id）。
 - catalog：PR #6375 的分支上已把条目文件改名为 `haotian-lu-prog__dsh-archived.yml` 并更新 url/name。
 
+
+### 2026-10-02 · 0.3.1：桌面应用被误拒（已修）
+
+**症状**：桌面应用（`DeepSeek Harness 0.2.0-rc.2-arm64`，即 Electron 外壳，不是 `dsh web`）
+里设置 → 已归档 永远显示"读不到宿主状态"；同一 URL 用普通浏览器打开一切正常。
+
+**根因**：路由信任要求 `sec-fetch-site: same-origin` **且**自定义标头同时成立；桌面应用的请求经过它自己的
+管线，可能既没有 Fetch Metadata 也没有自定义标头 → 403。而 403 当时**不留任何痕迹**，导致排查绕了两圈。
+
+**改了什么（0.3.1）**：
+1. 信任规则改为「回环 + 非跨站；信号一旦出现就权威且不可被标头推翻；两者都没有时才要标头」。
+2. `/state` 带上最近 20 条 `refusals`（含 host/origin/site/marker），403 不再无声。
+3. 客户端报错带上原因。
+4. 旧路由前缀 `/api/dsh-archived-sessions/*` 与旧标头继续服务——改名不该让已打开的窗口变成错误页。
+
+**教训**：这条插件的第一次"外网"失败，是我在没有证据时连着下了两个结论。留痕（refusals）比再猜一次便宜得多。
+

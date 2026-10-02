@@ -341,8 +341,19 @@ def main():
     status, body = plugin_api(BASE + "/state", extra={"Origin": "http://evil.example"})
     check("cross-origin Origin is refused", status == 403, json.dumps(body)[:120])
 
-    status, body = plugin_api(BASE + "/state", origin=False)
-    check("request with no same-origin signal is refused", status == 403, json.dumps(body)[:120])
+    status, body = plugin_api(BASE + "/state", origin=False, marker=False)
+    check("no same-origin signal and no marker is refused", status == 403, json.dumps(body)[:120])
+
+    # The pre-rename path stays served so a tab holding the 0.2.0 client keeps
+    # working across the rename instead of erroring until it is reloaded.
+    status, body = plugin_api("/api/dsh-archived-sessions/state", extra={"x-dsh-archived-sessions": "1"})
+    check("the pre-rename route still answers", status == 200 and body.get("apiVersion") == 2,
+          json.dumps(body)[:120])
+
+    status, body = plugin_api(BASE + "/state")
+    check("refusals are reported with their evidence",
+          isinstance(body.get("refusals"), list) and len(body["refusals"]) >= 1
+          and body["refusals"][0].get("trusted") is False, json.dumps(body.get("refusals", []))[:160])
 
     status, body = plugin_api(BASE + "/state", marker=False)
     check("request without the marker header is refused", status == 403, json.dumps(body)[:120])
