@@ -13,7 +13,7 @@ DSH 的「设置 → 已归档」页：逐条 / 批量删除已归档会话，�
 - `lib/host/trust.js` — 回环 + 同源 + 标头校验
 - `lib/client.js` — 客户端半边（lazy-CJS 单文件，无构建步骤）
 - `cordis.patch.yml` — bundle patch：把插件 `insert` 进 profile
-- `tools/host-smoke.mjs` — 宿主离线套件（45 项，临时 `DSH_HOME` + 假 ctx，**不需要 DSH**）
+- `tools/host-smoke.mjs` — 宿主离线套件（49 项，临时 `DSH_HOME` + 假 ctx，**不需要 DSH**）
 - `tools/client-smoke.mjs` — 客户端冒烟（31 项，桩 React + 桩 fetch）
 - `tools/compat-check.mjs` — 宿主契约检查（11 项，直接读 app.asar；DSH 升级后**先跑这个**）
 - `tools/e2e.py` — 真宿主端到端（41 项：建临时会话 → 归档 → 删除 → 回收站 → 恢复 → 永久删除）
