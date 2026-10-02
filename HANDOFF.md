@@ -68,3 +68,18 @@ profile patch 里 `disabled: true`）全部空转。而 `settings.section` 的 `
 - `tools/browser-acceptance.py` 的断言是中文文案：非中文界面下会误报。要么加语言判定，要么固定用中文 profile。
 - 提交身份：仓库是 public，全局 `user.email` 是 iCloud 地址会被 GitHub 拒收，用
   `49531320+haotian-lu-prog@users.noreply.github.com`。
+
+### 2026-10-02 补充：用户环境里的一次安装失败（与插件无关）
+
+现象：`dsh plugin --profile desktop add dsh-archived-sessions-manager` 报
+`ERR_PNPM_MINIMUM_RELEASE_AGE_VIOLATION`，点名的是 **`dsh-notifications@2.0.0`**（另一个包）。
+
+根因（在 profile 副本上逐个变量复现出来）：desktop 的 `pnpm-workspace.yaml` 里
+`minimumReleaseAgeExclude` 同时存在 `dsh-notifications@1.0.0` 与 `dsh-notifications@2.0.0`，
+**同名两条只有一条生效**，刚发布的 2.0.0 因此过不了闸门。删掉旧的 1.0.0 那条（或合并成
+`dsh-notifications@1.0.0 || 2.0.0`）后安装立刻通过。已修好并装进 desktop profile——
+本机 GUI 热加载成功，`GET /state` 返回 200。
+
+顺带把 `tools/e2e.py` 在**忙碌真宿主**上的三处竞态改成确定性断言（宿主会在删除后重新写回缓存、
+并重新物化它仍持有的会话）：现在对着正在使用的 GUI 连跑两次都是 36 PASS + 3 SKIP，跑完不留残留。
+

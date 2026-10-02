@@ -136,6 +136,29 @@ python3 tools/browser-acceptance.py   # 真浏览器；先起无头 Chrome --rem
 
 插件删掉的会话不会回来（`forever`），或者还躺在回收站里等 30 天过期（默认路径）。
 
+## 故障排查
+
+**`dsh plugin add` 报 `ERR_PNPM_MINIMUM_RELEASE_AGE_VIOLATION`（`Lockfile failed supply-chain policy check`）。**
+
+这不是本插件的问题：pnpm 11 默认给「24 小时内发布的版本」设了闸门，而 profile 的 `pnpm-workspace.yaml`
+里 `minimumReleaseAgeExclude` 是**按「包名@版本」逐条累加**的——同一个包名出现两条时**只有其中一条生效**
+（实测是列表里靠前的那条），于是新发布的那个版本永远过不了闸门。报错点名的包可能根本不是你要装的那个。
+
+修法：让每个包名只留一条，用范围覆盖新旧版本：
+
+```yaml
+minimumReleaseAgeExclude:
+  - dsh-notifications@1.0.0 || 2.0.0   # ✅ 一条顶两条
+```
+
+```yaml
+minimumReleaseAgeExclude:
+  - dsh-notifications@1.0.0            # ❌ 这两条同时存在时，
+  - dsh-notifications@2.0.0            #    2.0.0 那条不生效
+```
+
+删掉重复行后直接重跑 `dsh plugin --profile <name> add <包名>` 即可。
+
 ## 已知边界
 
 - `$DSH_HOME/storages/schedule.json` 与 `message_feedback.json` 里可能残留指向已删会话的引用。
