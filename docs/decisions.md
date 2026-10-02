@@ -48,6 +48,23 @@ catalog 的 CI（`scripts/check-submission.mjs`）与 dsh-market 前端都以**�
 投影缓存文档实测带 `record.rows.title.val` 与 `record.identity.{createdAt, cwd, formatVersion}`，足够画一行。
 `tools/client-smoke.mjs` 有两条断言盯这个回归（index-only 行必须渲染、只有宿主知道标题的行必须用宿主标题）。
 
+## 2026-10-02 · 项目改名为 `dsh-archived`
+
+**背景**：原名 `dsh-archived-sessions-manager` 同时是仓库名、npm 包名、插件 id 和仓库目录名，太长；
+它的职责也早就比"manager"窄——只做归档区那件事。
+
+**改了什么**：仓库、npm 包、插件/bundle id、客户端模块 id、locale 命名空间、CSS 前缀、日志前缀、
+路由前缀（`/api/dsh-archived-sessions/*` → `/api/dsh-archived/*`）、标头（`x-dsh-archived-sessions` → `x-dsh-archived`）、
+环境变量（`DSH_ARCHIVED_SESSIONS_OPENER` → `DSH_ARCHIVED_OPENER`）。
+
+**没改什么**（有意为之）：
+- **回收站目录仍是 `$DSH_HOME/.archived-sessions-quarantine/`**——它是磁盘上的既有状态，改名会把已 park 的会话变成孤儿。
+- **设置页的插槽 id 仍是 `archived-sessions`**——那是 **DSH 官方的 slot id**，不是我们的名字，改了就不再是同一格。
+- 隔离宿主 / 老 npm 包名保留：旧包 `dsh-archived-sessions-manager` 打 deprecate 指向新包，不 unpublish。
+
+**版本**：`0.3.0`。同一个版本号不该在两个包名下存在两份语义不同的东西，
+而这次路由前缀与标头都变了，属于破坏性变更，0.x 里就该是 minor。
+
 ## 2026-10-02 · 三个参考插件的功能取舍
 
 **采纳**：回收站（TOBYCAI / dream12347）、批量勾选、血缘（父/子会话）、按工作区分组、搜索含会话 ID、打开记录文件夹（Zephyr-vibe）、

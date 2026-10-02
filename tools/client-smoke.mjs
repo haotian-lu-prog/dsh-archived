@@ -140,7 +140,7 @@ globalThis.fetch = async (path, init) => {
 };
 
 await import(clientPath);
-check("module registered itself on the loader", loaded !== null && loaded.id === "dsh-archived-sessions-manager");
+check("module registered itself on the loader", loaded !== null && loaded.id === "dsh-archived");
 const client = loaded.exports;
 check("client half exports apply()", typeof client.apply === "function");
 check("client half injects slots/locale/uiWorkspace", ["slots", "locale", "uiWorkspace"].every((name) => client.inject.includes(name)), JSON.stringify(client.inject));
@@ -230,7 +230,7 @@ function findButton(tree, label) {
 }
 
 const props = () => ({
-  t: ctx.locale.bind("dsh-archived-sessions"),
+  t: ctx.locale.bind("dsh-archived"),
   unarchive: async () => {},
   useSessions: (selector) =>
     selector({ phase: "ready", byId: { [archivedId]: { displayTitle: "浏览器里的标题", updatedAt: Date.now() - 3 * 3600_000 } } }),
@@ -248,7 +248,7 @@ cursor = 0;
 const tree = registration.component(p);
 const rendered = textsOf(tree);
 
-check("the page asks the host for its rows", calls.some((call) => call.path === "/api/dsh-archived-sessions/state"));
+check("the page asks the host for its rows", calls.some((call) => call.path === "/api/dsh-archived/state"));
 check("client summary enriches the host title", rendered.includes("浏览器里的标题"), rendered.slice(0, 200));
 check("row group heading comes from the session cwd", rendered.includes("project"), rendered.slice(0, 200));
 check("index-only residue still renders a row", rendered.includes(residueId), rendered.slice(0, 300));
@@ -281,7 +281,7 @@ confirmButton.props.onClick();
 await new Promise((resolve) => setTimeout(resolve, 10));
 const posted = calls.filter((call) => call.method === "POST");
 check("confirming posts a quarantine delete for that row",
-  posted.some((call) => call.path === "/api/dsh-archived-sessions/delete" && call.body.sessionId === archivedId && call.body.mode === "quarantine"),
+  posted.some((call) => call.path === "/api/dsh-archived/delete" && call.body.sessionId === archivedId && call.body.mode === "quarantine"),
   JSON.stringify(posted).slice(0, 200));
 
 // --- English locale ----------------------------------------------------------------------

@@ -1,6 +1,6 @@
 {
-  "name": "dsh-archived-sessions-manager",
-  "version": "0.2.0",
+  "name": "dsh-archived",
+  "version": "0.3.0",
   "description": "Archived-sessions page for DeepSeek Harness: per-row and batch deletion that clears the session log, the projection cache and the archive index together, with a 30-day recycle bin, subagent-aware refusals and a per-row disk footprint.",
   "type": "module",
   "main": "lib/index.js",
@@ -92,11 +92,11 @@
   "author": "Haotian Lu (https://github.com/haotian-lu-prog)",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/haotian-lu-prog/dsh-archived-sessions-manager.git"
+    "url": "git+https://github.com/haotian-lu-prog/dsh-archived.git"
   },
-  "homepage": "https://github.com/haotian-lu-prog/dsh-archived-sessions-manager#readme",
+  "homepage": "https://github.com/haotian-lu-prog/dsh-archived#readme",
   "bugs": {
-    "url": "https://github.com/haotian-lu-prog/dsh-archived-sessions-manager/issues"
+    "url": "https://github.com/haotian-lu-prog/dsh-archived/issues"
   },
   "publishConfig": {
     "registry": "https://registry.npmjs.org",

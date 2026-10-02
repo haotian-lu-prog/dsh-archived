@@ -19,7 +19,7 @@ import { fileURLToPath } from "node:url";
 const here = dirname(fileURLToPath(import.meta.url));
 const home = mkdtempSync(join(tmpdir(), "dasm-home-"));
 process.env.DSH_HOME = home;
-process.env.DSH_ARCHIVED_SESSIONS_OPENER = "none";
+process.env.DSH_ARCHIVED_OPENER = "none";
 
 const failures = [];
 function check(label, condition, detail = "") {
@@ -28,7 +28,7 @@ function check(label, condition, detail = "") {
   if (!condition) failures.push(label);
 }
 
-const HEADER = "x-dsh-archived-sessions";
+const HEADER = "x-dsh-archived";
 const ids = {
   withArtifact: "session-11111111-1111-4111-8111-111111111111",
   indexOnly: "session-22222222-2222-4222-8222-222222222222",
@@ -172,7 +172,7 @@ async function call(path, options) {
   return { status: response.captured.status, body: response.captured.body };
 }
 
-const P = "/api/dsh-archived-sessions";
+const P = "/api/dsh-archived";
 const artifactOf = (id) => join(home, "sessions", bucket, id);
 const cacheOf = (id) => join(home, "storages", "session_projcache", "sessions", id + ".json");
 

@@ -1,4 +1,4 @@
-# AGENTS.md — dsh-archived-sessions-manager
+# AGENTS.md — dsh-archived
 
 DSH 的「设置 → 已归档」页：逐条 / 批量删除已归档会话，把会话日志、投影缓存、归档索引三处状态一起处理，
 并默认先移进回收站，30 天内可恢复。
@@ -56,7 +56,7 @@ AI 代理改完代码**至少跑 `npm test`**；动了路由/删除流水线要�
 - 删除后的 +3s / +15s / +60s 清扫**只删投影缓存文档**，且要求「该 id 不在归档集合、没在跑、磁盘上没有会话目录」。
   日志目录不会复活；目录回来了说明会话被恢复了，绝不能动。
 - 路由信任：仅回环 + 同源。`Origin` 存在时必须与 Host 匹配；浏览器同源 GET 不带 `Origin`，
-  由 `sec-fetch-site: same-origin` 兜底；两个信号都没有则拒绝。还要校验标头 `x-dsh-archived-sessions`。
+  由 `sec-fetch-site: same-origin` 兜底；两个信号都没有则拒绝。还要校验标头 `x-dsh-archived`。
 - **DSH 0.2.0-rc.2 没有官方归档设置页**（`dsh-client-ui-settings-unarchive-sessions` 这个包不存在），
   `settings.section` 的 `archived-sessions` id 是空的，所以不需要任何 profile patch。
   `priority: -1` 只是对「还带官方页的旧宿主」的防御，别删。
@@ -69,4 +69,4 @@ AI 代理改完代码**至少跑 `npm test`**；动了路由/删除流水线要�
 - 包就在仓库根目录，已发布到 npm；改完代码要发版才有新版本，catalog 描述也要跟着改（描述必须与代码一致）。
 - 提交身份：仓库是 public，全局 `user.email` 是 iCloud 地址会被 GitHub 拒收；
   用 `49531320+haotian-lu-prog@users.noreply.github.com`。
-- `DSH_ARCHIVED_SESSIONS_OPENER=none` 会让「打开文件夹」只回路径、不启动文件管理器（headless / CI 用）。
+- `DSH_ARCHIVED_OPENER=none` 会让「打开文件夹」只回路径、不启动文件管理器（headless / CI 用）。
