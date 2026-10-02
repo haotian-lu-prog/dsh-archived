@@ -121,3 +121,15 @@ profile patch 里 `disabled: true`）全部空转。而 `settings.section` 的 `
 
 **教训**：这条插件的第一次"外网"失败，是我在没有证据时连着下了两个结论。留痕（refusals）比再猜一次便宜得多。
 
+
+### 2026-10-02 深夜 · 桌面应用被误拒一事的收尾
+
+重启桌面应用后，宿主加载到 **0.3.1**：`/state` 里出现 `refusals` 字段、旧的
+`/api/dsh-archived-sessions/state` 返回 200，且**至今没有再记录到任何被拒请求**。
+也就是说桌面应用那条路径已经走通，无需再放宽信任。
+
+- 装机路径：`dsh plugin --profile desktop add dsh-archived@0.3.1`；
+  **同路径的版本升级不会让宿主重新 import**——必须 `remove` + `add`（composition 变化）或重启应用，
+  这一点在 `docs/decisions.md` 与下面的"下一步"里都值得记住。
+- 归档集合与回收站此刻都是空的（用户自己清掉了先前那 3 个测试会话）；会话目录 21 个、投影缓存 37 份，store 完好。
+
