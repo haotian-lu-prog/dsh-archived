@@ -11,7 +11,12 @@
 
 > 一个仓库同一时刻只允许一个写者；下一位开工时把上一行改成自己。
 
-## 当前状态（2026-10-02）—— **0.2.0 已发布并验证**
+## 当前状态（2026-10-02）—— **改名为 `dsh-archived`，0.3.0**
+
+项目原名 `dsh-archived-sessions-manager`，现为 **`dsh-archived`**（仓库 / npm 包 / 插件 id / 路由前缀全部同步）。
+取舍见 `docs/decisions.md`；旧的 npm 包打 deprecate 指向新包，不 unpublish。
+
+### 0.2.0 的交付与验证（改名前的版本）
 
 面向 DSH **0.2.0-rc.2** 的重构已完成、已发版、已在真宿主 + 真浏览器上跑通。合并于 PR #4（squash `e695373`）。
 
@@ -71,7 +76,7 @@ profile patch 里 `disabled: true`）全部空转。而 `settings.section` 的 `
 
 ### 2026-10-02 补充：用户环境里的一次安装失败（与插件无关）
 
-现象：`dsh plugin --profile desktop add dsh-archived-sessions-manager` 报
+现象：`dsh plugin --profile desktop add dsh-archived` 报
 `ERR_PNPM_MINIMUM_RELEASE_AGE_VIOLATION`，点名的是 **`dsh-notifications@2.0.0`**（另一个包）。
 
 根因（在 profile 副本上逐个变量复现出来）：desktop 的 `pnpm-workspace.yaml` 里

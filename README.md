@@ -1,4 +1,4 @@
-# dsh-archived-sessions-manager
+# dsh-archived
 
 给 DeepSeek Harness 的 **设置 → 已归档** 页补上删除：逐条删、勾选批量删、清空；
 删除**默认先进回收站**（30 天内可恢复），并显示每行的磁盘占用。
@@ -57,12 +57,12 @@ DSH 0.2.0-rc.2 里，一个已归档会话牵涉四处状态，少清一处列�
 
 | 方法 | 路径 | 说明 |
 |---|---|---|
-| GET | `/api/dsh-archived-sessions/state` | 归档行 + 磁盘占用 + 血缘 + 回收站 + 旧聚合探测 |
-| POST | `/api/dsh-archived-sessions/delete` | `{ sessionId, mode: "quarantine" \| "forever" }` |
-| POST | `/api/dsh-archived-sessions/delete-all` | `{ mode, ids? }`；`ids` 缺省表示清空全部 |
-| POST | `/api/dsh-archived-sessions/restore` | `{ sessionId }` 从回收站恢复并重新归档 |
-| POST | `/api/dsh-archived-sessions/empty-quarantine` | 彻底清空回收站 |
-| POST | `/api/dsh-archived-sessions/reveal` | `{ sessionId }` 在系统文件管理器里打开该会话目录 |
+| GET | `/api/dsh-archived/state` | 归档行 + 磁盘占用 + 血缘 + 回收站 + 旧聚合探测 |
+| POST | `/api/dsh-archived/delete` | `{ sessionId, mode: "quarantine" \| "forever" }` |
+| POST | `/api/dsh-archived/delete-all` | `{ mode, ids? }`；`ids` 缺省表示清空全部 |
+| POST | `/api/dsh-archived/restore` | `{ sessionId }` 从回收站恢复并重新归档 |
+| POST | `/api/dsh-archived/empty-quarantine` | 彻底清空回收站 |
+| POST | `/api/dsh-archived/reveal` | `{ sessionId }` 在系统文件管理器里打开该会话目录 |
 
 拒绝码：`invalid-session-id`、`not-archived`、`session-running`、`subagent-running`、`no-registry`、
 `busy`、`not-quarantined`、`no-artifact`、`forbidden`、`internal`。
@@ -71,7 +71,7 @@ DSH 0.2.0-rc.2 里，一个已归档会话牵涉四处状态，少清一处列�
 
 ```sh
 # 装进 profile（包自带的 bundle patch 会把它挂上）
-dsh plugin --profile web add dsh-archived-sessions-manager
+dsh plugin --profile web add dsh-archived
 
 # 重启 dsh web，然后 设置 → 已归档
 ```
@@ -83,10 +83,10 @@ dsh plugin --profile web add dsh-archived-sessions-manager
 
 ```sh
 # 1) 让 profile 能解析到这个包（link: 指向本仓库根目录）
-ln -s /path/to/repo ~/.dsh/profiles/web/node_modules/dsh-archived-sessions-manager
+ln -s /path/to/repo ~/.dsh/profiles/web/node_modules/dsh-archived
 #    ~/.dsh/profiles/web/package.json
-#      "dependencies": { "dsh-archived-sessions-manager": "link:/path/to/repo" }
-#      "dsh": { "profile": { "bundles": [ ..., "dsh-archived-sessions-manager" ] } }
+#      "dependencies": { "dsh-archived": "link:/path/to/repo" }
+#      "dsh": { "profile": { "bundles": [ ..., "dsh-archived" ] } }
 
 # 2) 开发时热重载宿主代码（默认 root: [] 只监听 profile 清单与 patch 文件）
 #    ~/.dsh/profiles/web/cordis.patch.yml
@@ -129,9 +129,9 @@ python3 tools/browser-acceptance.py   # 真浏览器；先起无头 Chrome --rem
 
 ## 回滚
 
-1. 从 `~/.dsh/profiles/web/package.json` 的 `bundles` 与 `dependencies` 里删掉 `dsh-archived-sessions-manager`；
-   或直接 `dsh plugin --profile web remove dsh-archived-sessions-manager`；
-2. 删掉 `~/.dsh/profiles/web/node_modules/dsh-archived-sessions-manager` 软链（源码安装时）；
+1. 从 `~/.dsh/profiles/web/package.json` 的 `bundles` 与 `dependencies` 里删掉 `dsh-archived`；
+   或直接 `dsh plugin --profile web remove dsh-archived`；
+2. 删掉 `~/.dsh/profiles/web/node_modules/dsh-archived` 软链（源码安装时）；
 3. `~/.dsh/.archived-sessions-quarantine/` 里可能还有待恢复的会话——确认不需要后手动删除即可。
 
 插件删掉的会话不会回来（`forever`），或者还躺在回收站里等 30 天过期（默认路径）。
@@ -170,4 +170,4 @@ pnpm 每次成功安装后都会往这个列表追加一条「包名@版本」�
   它们是宿主自己的 domain store，外部改写会被内存状态覆盖，本插件**不动**它们（见 `docs/decisions.md`）。
 - `$DSH_HOME/storages/session_projcache.json` 是 per-record 布局之前的旧聚合，实测早已停止写入
   （mtime 远早于 `session_projcache/sessions/`）。插件只探测并在详情里标注，不写入。
-- 无头宿主没有文件管理器：设 `DSH_ARCHIVED_SESSIONS_OPENER=none`，「打开文件夹」只回路径不启动程序。
+- 无头宿主没有文件管理器：设 `DSH_ARCHIVED_OPENER=none`，「打开文件夹」只回路径不启动程序。

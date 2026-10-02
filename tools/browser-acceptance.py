@@ -207,7 +207,7 @@ def plugin_state():
     """Read the plugin's own state route exactly as a same-origin browser GET does."""
     from e2e import plugin_api
 
-    status, state = plugin_api("/api/dsh-archived-sessions/state", origin=False,
+    status, state = plugin_api("/api/dsh-archived/state", origin=False,
                                extra={"sec-fetch-site": "same-origin"})
     if status != 200:
         raise SystemExit(f"state route returned {status}: {state}")
@@ -225,7 +225,7 @@ def purge(session_id):
     """Permanent delete, used for cleanup so a run never leaves a parked session."""
     from e2e import plugin_api
 
-    plugin_api("/api/dsh-archived-sessions/delete", "POST", {"sessionId": session_id, "mode": "forever"},
+    plugin_api("/api/dsh-archived/delete", "POST", {"sessionId": session_id, "mode": "forever"},
                origin=False, extra={"sec-fetch-site": "same-origin"})
 
 

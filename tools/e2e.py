@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""End-to-end acceptance for dsh-archived-sessions-manager, against a live host.
+"""End-to-end acceptance for dsh-archived, against a live host.
 
 Creates scratch sessions through the official RPCs, archives them, then drives
 the plugin's own HTTP routes exactly as the settings page does, checking every
@@ -32,8 +32,8 @@ import uuid
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from rpc import base_url, cookie_header  # noqa: E402  (same-directory helper)
 
-HEADER = "x-dsh-archived-sessions"
-BASE = "/api/dsh-archived-sessions"
+HEADER = "x-dsh-archived"
+BASE = "/api/dsh-archived"
 FAILURES = []
 
 
