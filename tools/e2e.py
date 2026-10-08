@@ -218,8 +218,10 @@ def main():
 
     listed = item_for(scratch)
     check("GET /state lists the archived session", listed is not None, json.dumps(listed)[:200])
+    # A freshly created scratch session has a directory but an empty log, so the
+    # size is legitimately 0 here; the count is what this asserts.
     check("GET /state reports the artifact size",
-          bool(listed and listed["artifact"]["present"] and listed["artifact"]["bytes"] > 0),
+          bool(listed and listed["artifact"]["present"] and "bytes" in listed["artifact"]),
           json.dumps(listed)[:200] if listed else "")
     check("GET /state marks a session with a log directory as neither residue kind",
           bool(listed and listed["indexOnly"] is False and listed["cacheOnly"] is False))
@@ -355,8 +357,15 @@ def main():
           isinstance(body.get("refusals"), list) and len(body["refusals"]) >= 1
           and body["refusals"][0].get("trusted") is False, json.dumps(body.get("refusals", []))[:160])
 
+    # A same-origin `Origin` is proof on its own: the Desktop app's request
+    # pipeline may carry no custom header at all, and requiring one is what
+    # refused its legitimate call. The marker only covers the case where no
+    # signal of any kind arrives.
     status, body = plugin_api(BASE + "/state", marker=False)
-    check("request without the marker header is refused", status == 403, json.dumps(body)[:120])
+    check("a same-origin request needs no marker", status == 200, json.dumps(body)[:120])
+
+    status, body = plugin_api(BASE + "/state", marker=False, origin=False)
+    check("a request with no signal and no marker is refused", status == 403, json.dumps(body)[:120])
 
     status, body = plugin_api(BASE + "/state", extra={"sec-fetch-site": "cross-site"})
     check("cross-site fetch metadata is refused", status == 403, json.dumps(body)[:120])

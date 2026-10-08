@@ -3,6 +3,8 @@ node_modules/
 dist/
 build/
 out/
+# npm pack 产物（发布前生成，不进版本库）
+*.tgz
 *.tsbuildinfo
 .venv/
 __pycache__/

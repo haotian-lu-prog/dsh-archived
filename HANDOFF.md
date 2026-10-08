@@ -5,11 +5,56 @@
 
 ## 当前写者
 
-- 工具：DSH（2026-10-02 0.2.0 重构收工）
+- 工具：DSH（2026-10-08 修导入会话删不掉，发 0.3.2）
 - 分支：main
-- 开始时间：2026-10-02 16:45
+- 开始时间：2026-10-08 13:00
 
 > 一个仓库同一时刻只允许一个写者；下一位开工时把上一行改成自己。
+
+## 当前状态（2026-10-08）—— **发布 0.3.2：接受导入 id + 按真实 id 解析目录**
+
+用户报「设置 → 已归档」里删不掉（截图里 40 条，点「删除全部」只得到一句通用错误）。
+根因两条，都已在真机数据上证实并已修：
+
+1. **id 白名单写死了。** `lib/host/paths.js` 的 `SESSION_ID` 只认 `session-<uuid>`，
+   而面板里那 40 条全是导入插件命名的 `import-<uuid>` / `import-session-<uuid>`。
+   `deleteOne()` 第一行就 `invalid-session-id`，一个字节都没动——回收站目录 mtime 还停在 10-02，
+   40 个投影缓存文档 mtime 还是导入那一刻。逐条删除、批量删除、恢复、打开文件夹全部同样被拒。
+2. **目录名 ≠ 注册表 id。** 归档索引存带命名空间的 id，磁盘上的会话目录是 `session-<uuid>`
+   或裸 uuid（DSH 按日志头里的 `id` 命名，见 `encodeSegment`）。老 `locateArtifacts` 直接拿注册表 id
+   拼路径，真机上 40 条命中 0 条——**只修正则的话会「报告成功、日志全留在盘上」**，
+   正是本插件存在的意义所要防的那种假成功。
+
+改动（`lib/host/paths.js`、`lib/host/quarantine.js`、`lib/index.js`、`lib/client.js`）：
+
+- `SESSION_ID` 接受三种形态；新增 `canonicalSessionId`（剥掉导入命名空间 → 裸 uuid，
+  给宿主 API 与磁盘用）和 `artifactIdCandidates`（候选目录名）。
+- `locateArtifacts` 先试候选名，再用 `decodeSegment` 比对目录名，**只认候选内的名字**，
+  命名空间撞车也不会误删别的会话日志。
+- 导入行可能别名到一个正在跑的会话（`import-<uuid>` 的裸 uuid 撞上 `session-<uuid>`）：
+  新增 `runningAlias` 拒绝，smoke 有专门断言。
+- 回收站路径与缓存文档一律用裸 id（`projectionCacheFile(canonicalSessionId(id))`）；
+  `restoreSession` 也把目录放回裸 id 名下，否则恢复完又找不到。
+- 客户端 `request()` 现在会因非 2xx 抛错（以前 403/500 照样 resolve，
+  再在 `payload.results.filter` 上抛 TypeError，把真实原因换成一句通用错误）；
+  批量结果读取加了形状兜底，错误码经 `describeError` 本地化。
+
+验证（全部实跑）：
+
+| 套件 | 结果 |
+|---|---|
+| `tools/host-smoke.mjs` | 68/68（新增 import id 回归，含「别名到运行中会话必须拒绝」与 5 条畸形 id 拒绝） |
+| `tools/client-smoke.mjs` | 31/31 |
+| `tools/compat-check.mjs` | 11/11 |
+| `tools/e2e.py` | 40/40（隔离 `DSH_HOME=/tmp/dsh-e2e-home`，`dsh --profile web --port 3199`，插件 symlink 指向本仓库） |
+
+顺带修掉两条**过时/脆弱**的 e2e 断言（非本次改动引入）：`marker=False` 那条写于
+「必须有标头」的年代，而桌面应用修复后同源 `Origin` 本身就是证据；artifact 大小那条对
+空日志的 scratch 会话断言 `bytes > 0`。两条都改成与 README 一致的说法。
+
+**未决：** ①0.3.2 发布记录见 `docs/decisions.md`（npm 上装 0.3.1 的机器要升级才拿到这个修复）；
+②真机那 40 条已在 2026-10-08 13:07 被用户自己的 `~/Dev/dsh/cleanup-sessions.mjs`
+连隔离区一起清掉，所以「本机验证删除」这条路径已无法复现——上表的 e2e 是隔离宿主。
 
 ## 当前状态（2026-10-02）—— **改名为 `dsh-archived`，0.3.0**
 
