@@ -13,10 +13,10 @@ DSH 的「设置 → 已归档」页：逐条 / 批量删除已归档会话，�
 - `lib/host/trust.js` — 回环 + 同源 + 标头校验
 - `lib/client.js` — 客户端半边（lazy-CJS 单文件，无构建步骤）
 - `cordis.patch.yml` — bundle patch：把插件 `insert` 进 profile
-- `tools/host-smoke.mjs` — 宿主离线套件（49 项，临时 `DSH_HOME` + 假 ctx，**不需要 DSH**）
+- `tools/host-smoke.mjs` — 宿主离线套件（68 项，临时 `DSH_HOME` + 假 ctx，**不需要 DSH**）
 - `tools/client-smoke.mjs` — 客户端冒烟（31 项，桩 React + 桩 fetch）
 - `tools/compat-check.mjs` — 宿主契约检查（11 项，直接读 app.asar；DSH 升级后**先跑这个**）
-- `tools/e2e.py` — 真宿主端到端（41 项：建临时会话 → 归档 → 删除 → 回收站 → 恢复 → 永久删除）
+- `tools/e2e.py` — 真宿主端到端（40 项：建临时会话 → 归档 → 删除 → 回收站 → 恢复 → 永久删除）
 - `tools/browser-acceptance.py` — 真浏览器验收（25 项，纯标准库 CDP）
 - `tools/rpc.py` — 本地 RPC 助手：用 `~/.dsh/.credentials.yaml` 里的会话密钥现场签 cookie
 
@@ -51,6 +51,12 @@ AI 代理改完代码**至少跑 `npm test`**；动了路由/删除流水线要�
   永远恢复不了、面板也不显示的条目。
 - 只接受**已归档**的 id；正在跑回合的会话、以及有**正在运行的 subagent 后代**的会话必须拒绝。
   拒绝码语义以 `tools/host-smoke.mjs` 与 `tools/e2e.py` 的断言为准，客户端词典必须逐条有文案（smoke 会查）。
+- **id 有两套，别混。** 归档索引里的「注册表 id」可以带导入命名空间（`import-<uuid>` / `import-session-<uuid>`），
+  而磁盘目录与宿主 API 用的是「存储 id」（`session-<uuid>` 或裸 uuid）。`SESSION_ID` 三种形态全收；
+  存储侧一律走 `canonicalSessionId()`，`locateArtifacts()` 只按 `artifactIdCandidates()` 里解码后的名字匹配——
+  **不许用字符串去前缀猜目录**，猜错就是「报成功、日志还在盘上」。运行中检查要连别名一起查：
+  `import-<uuid>` 剥出的裸 uuid 可能正是另一个在跑的 `session-<uuid>`。
+  回归见 `tools/host-smoke.mjs` 的 `--- imported sessions ---` 段。
 - **行的事实源是宿主路由**（`GET /state`），浏览器 `useSessions` 只是增强。绝不允许因为拿不到浏览器摘要就丢行——
   那正是「清不掉的残留」产生的原因，client-smoke 有一条断言专门盯这个回归。
 - 删除后的 +3s / +15s / +60s 清扫**只删投影缓存文档**，且要求「该 id 不在归档集合、没在跑、磁盘上没有会话目录」。
