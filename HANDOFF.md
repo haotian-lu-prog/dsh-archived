@@ -20,7 +20,8 @@
   并补了 sweep 场景（扫描/24h 保护/入回收站/每周运行）。
   **真宿主行为记录**：这份 DSH 没有 `attachSession` 远程（只有 `insertSessionBefore` 与 `detachSession`），
   所以 RPC 建的会话不在任何工作区列表里 —— 此时 `detached: 0` 是正确结果，不是缺陷（e2e 里以 SKIP 注明原因）。
-  **未做**：分支未推送、未开 PR。
+  **已推送并开 PR**：`feat/stale-sweep` → **PR #13**（https://github.com/haotian-lu-prog/dsh-archived/pull/13）。
+  **未做**：浏览器验收 `tools/browser-acceptance.py`（需要无头 Chrome 9333），以及合并后的发版。
 
 > 一个仓库同一时刻只允许一个写者；下一位开工时把上一行改成自己。
 
