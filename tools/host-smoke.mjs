@@ -333,6 +333,69 @@ check("emptying the recycle bin reports what it freed", emptied.body.ok === true
 check("emptying the bin frees the parked bytes", emptied.body.bytes > 0, String(emptied.body.bytes));
 check("recycle bin directory is gone", readdirSync(join(home, ".archived-sessions-quarantine")).length === 0);
 
+// --- imported sessions ---------------------------------------------------------------------
+// The import feature namespaces the id it files in the archive index, while the
+// session store keeps the bare uuid. Every row below was a real row the panel
+// drew and every delete of it came back `invalid-session-id`, because the id
+// guard only knew `session-<uuid>` — and once that guard is widened, the lookup
+// still has to find a directory whose name is NOT the registry id.
+const importCached = "import-e1e1e1e1-e1e1-4e1e-8e1e-e1e1e1e1e1e1";
+const importDir = "import-session-e2e2e2e2-e2e2-4e2e-8e2e-e2e2e2e2e2e2";
+const importRaw = "import-e3e3e3e3-e3e3-4e3e-8e3e-e3e3e3e3e3e3";
+const importRawInner = importRaw.slice("import-".length);
+seedCache(importCached.slice("import-".length), "导入的会话（只剩缓存）");
+seedArtifact(importDir.slice("import-session-".length), 777);
+seedCache(importDir.slice("import-session-".length), "导入的会话（带日志）");
+seedArtifact(importRawInner, 555);
+seedCache(importRawInner, "导入的会话（裸 uuid 目录）");
+for (const id of [importCached, importDir, importRaw]) archived.add(id);
+
+// An imported row whose raw uuid names a *different* live session must not be
+// deleted out from under that session's agent.
+const importAlias = "import-33333333-3333-4333-8333-333333333333";
+seedCache(importAlias.slice("import-".length), "导入的会话（裸 uuid 正在跑）");
+archived.add(importAlias);
+
+const importState = await call(P + "/state");
+const importRows = Object.fromEntries(importState.body.items.map((item) => [item.id, item]));
+check("an imported row reaches the panel", importRows[importCached] !== undefined && importRows[importDir] !== undefined, String(importState.body.items.length));
+check("an imported row's log directory is found under its raw id",
+  importRows[importDir].artifact.present === true && importRows[importDir].artifact.bytes === 777,
+  JSON.stringify(importRows[importDir].artifact));
+check("import-session-<uuid> resolves to the bare directory too",
+  importRows[importRaw].artifact.present === true && importRows[importRaw].artifact.bytes === 555,
+  JSON.stringify(importRows[importRaw].artifact));
+const aliasDelete = await call(P + "/delete", { method: "POST", body: { sessionId: importAlias } });
+check("an imported id aliasing a running session is refused",
+  aliasDelete.body.error === "session-running" && aliasDelete.body.runningAs === ids.running,
+  JSON.stringify(aliasDelete.body).slice(0, 160));
+check("that refusal left its cache document alone", existsSync(cacheOf(importAlias.slice("import-".length))) === true);
+
+const importBatch = await call(P + "/delete-all", { method: "POST", body: { ids: [importCached, importDir, importRaw], mode: "quarantine" } });
+check("every imported row deletes", importBatch.body.ok === true && importBatch.body.results.every((result) => result.ok === true),
+  JSON.stringify(importBatch.body.results).slice(0, 240));
+check("an imported row's log directory is really gone", existsSync(artifactOf(importDir.slice("import-session-".length))) === false);
+check("a bare-uuid directory is really gone", existsSync(artifactOf(importRawInner)) === false);
+check("the imported row's cache document is gone", existsSync(cacheOf(importDir.slice("import-session-".length))) === false && existsSync(cacheOf(importCached.slice("import-".length))) === false);
+check("the imported rows left the archive index", [importCached, importDir, importRaw].every((id) => archived.has(id) === false));
+const importBin = await call(P + "/state");
+check("imported deletions park what had a payload", importBin.body.quarantine.count === 3, String(importBin.body.quarantine.count));
+
+const importRestore = await call(P + "/restore", { method: "POST", body: { sessionId: importDir } });
+check("an imported session can be restored", importRestore.body.ok === true && importRestore.body.restored.directories === 1,
+  JSON.stringify(importRestore.body).slice(0, 160));
+check("the restored imported log is back under its bare uuid",
+  existsSync(join(artifactOf(importDir.slice("import-session-".length)), "session.v4.jsonl.zstd")));
+
+const importReveal = await call(P + "/reveal", { method: "POST", body: { sessionId: importRaw } });
+check("reveal accepts an imported id", importReveal.body.error !== "invalid-session-id", JSON.stringify(importReveal.body).slice(0, 120));
+
+// The namespace must not become a way around the path-safety argument.
+for (const bad of ["import-../../etc/passwd", "import-session-1234", "import-", "session-../../x", "import-session-" + "a".repeat(36)]) {
+  const refused = await call(P + "/delete", { method: "POST", body: { sessionId: bad } });
+  check(`a malformed id is still refused (${bad.slice(0, 28)})`, refused.body.error === "invalid-session-id", JSON.stringify(refused.body).slice(0, 120));
+}
+
 // --- capability probe ---------------------------------------------------------------------
 const routesWithout = routes.size;
 const blind = { ...ctx, workspaceRegistry: { get archivedSessionIds() { return [ids.indexOnly]; } }, get: () => undefined };

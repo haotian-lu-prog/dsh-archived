@@ -80,6 +80,8 @@ const archivedId = "session-11111111-2222-3333-4444-555555555555";
 const hostTitleId = "session-77777777-7777-4777-8777-777777777777";
 const residueId = "session-99999999-8888-7777-6666-555555555555";
 const calls = [];
+/** One-shot override for the next fetch reply, so transport failures can be tested. */
+let fetchOverride = null;
 const statePayload = {
   ok: true,
   apiVersion: 2,
@@ -136,7 +138,10 @@ const statePayload = {
 };
 globalThis.fetch = async (path, init) => {
   calls.push({ path, method: init?.method ?? "GET", body: init?.body ? JSON.parse(init.body) : undefined });
-  return { status: 200, json: async () => statePayload };
+  const override = fetchOverride;
+  fetchOverride = null;
+  if (override) return { ok: override.status >= 200 && override.status < 300, status: override.status, json: async () => override.body };
+  return { ok: true, status: 200, json: async () => statePayload };
 };
 
 await import(clientPath);

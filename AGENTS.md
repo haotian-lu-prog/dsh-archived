@@ -55,6 +55,12 @@ AI 代理改完代码**至少跑 `npm test`**；动了路由/删除流水线要�
   永远恢复不了、面板也不显示的条目。
 - 只接受**已归档**的 id；正在跑回合的会话、以及有**正在运行的 subagent 后代**的会话必须拒绝。
   拒绝码语义以 `tools/host-smoke.mjs` 与 `tools/e2e.py` 的断言为准，客户端词典必须逐条有文案（smoke 会查）。
+- **id 有两套，别混。** 归档索引里的「注册表 id」可以带导入命名空间（`import-<uuid>` / `import-session-<uuid>`），
+  而磁盘目录与宿主 API 用的是「存储 id」（`session-<uuid>` 或裸 uuid）。`SESSION_ID` 三种形态全收；
+  存储侧一律走 `canonicalSessionId()`，`locateArtifacts()` 只按 `artifactIdCandidates()` 里解码后的名字匹配——
+  **不许用字符串去前缀猜目录**，猜错就是「报成功、日志还在盘上」。运行中检查要连别名一起查：
+  `import-<uuid>` 剥出的裸 uuid 可能正是另一个在跑的 `session-<uuid>`。
+  回归见 `tools/host-smoke.mjs` 的 `--- imported sessions ---` 段。
 - **行的事实源是宿主路由**（`GET /state`），浏览器 `useSessions` 只是增强。绝不允许因为拿不到浏览器摘要就丢行——
   那正是「清不掉的残留」产生的原因，client-smoke 有一条断言专门盯这个回归。
 - 删除后的 +3s / +15s / +60s 清扫**只删投影缓存文档**，且要求「该 id 不在归档集合、没在跑、磁盘上没有会话目录」。
