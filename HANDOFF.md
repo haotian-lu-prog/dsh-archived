@@ -5,9 +5,17 @@
 
 ## 当前写者
 
-- 工具：DSH（2026-10-02 0.2.0 重构收工）
-- 分支：main
-- 开始时间：2026-10-02 16:45
+- 工具：DSH（会话 `session-ce4a5890`）· 2026-10-09 15:25 JST 起
+- 分支：`feat/stale-sweep`（目标 0.4.0）
+- 开始时间：2026-10-09 15:25 JST
+- 本轮：**并入「陈旧会话清理」**（手动 + 半自动）。扫描「14 天以上 + 空会话」→ 勾选删除：官方
+  `Workspace.detachSession` 从工作区列表移除 + 复用现有回收站流水线；可选的每周自动运行 = **只移进回收站**。
+  取舍与边界见 `docs/decisions.md`。
+  **已完成**：`lib/host/sweep.js`（扫描 + detach 计划）· `lib/index.js`（4 条路由 + 每周定时器 + 设置文档
+  `$DSH_HOME/dsh-archived/sweep.json`）· `lib/client.js`（页面顶部一节 + 中英 i18n）· 离线套件与契约检查
+  （`npm test` 全绿：69 / 31 / 12 项）· README / AGENTS / decisions 同步。
+  **未做**：真宿主 `tools/e2e.py`（需要隔离宿主，因为 profile 里装的是 0.3.1 的副本，不是本仓库的链接）；
+  分支未推送、未开 PR。
 
 > 一个仓库同一时刻只允许一个写者；下一位开工时把上一行改成自己。
 

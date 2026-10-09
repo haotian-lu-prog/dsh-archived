@@ -86,6 +86,9 @@ const workspace = readText(modules + "dsh-workspace/lib/types/index.d.ts") ?? re
 check("the workspace registry still owns the archive set",
   typeof workspace === "string" && workspace.includes("archivedSessionIds") && workspace.includes("unarchiveSession"));
 check("the registry still exposes archiveSession", typeof workspace === "string" && workspace.includes("archiveSession"));
+const catalog = readText(modules + "dsh-tool-cordis/lib/types/api-catalog.js");
+check("the workspace API still advertises detachSession (the sweep's only removal verb)",
+  typeof catalog === "string" && catalog.includes("detachSession"));
 check("the archived-session admission gate is present",
   entry(modules + "dsh-api-session-controller/lib/types/archived-session-gate.js") !== null);
 
