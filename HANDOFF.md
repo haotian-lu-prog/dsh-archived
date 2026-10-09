@@ -6,7 +6,7 @@
 ## 当前写者
 
 - 工具：DSH（会话 `session-ce4a5890`）· 2026-10-09 15:25 JST 起
-- 分支：`feat/stale-sweep`（目标 0.4.0）
+- 分支：`release/0.4.0`（0.4.0 已发布；本 PR 合并后回 main）
 - 开始时间：2026-10-09 15:25 JST
 - 本轮：**并入「陈旧会话清理」**（手动 + 半自动）。扫描「14 天以上 + 空会话」→ 勾选删除：官方
   `Workspace.detachSession` 从工作区列表移除 + 复用现有回收站流水线；可选的每周自动运行 = **只移进回收站**。
@@ -21,7 +21,15 @@
   **真宿主行为记录**：这份 DSH 没有 `attachSession` 远程（只有 `insertSessionBefore` 与 `detachSession`），
   所以 RPC 建的会话不在任何工作区列表里 —— 此时 `detached: 0` 是正确结果，不是缺陷（e2e 里以 SKIP 注明原因）。
   **已推送并开 PR**：`feat/stale-sweep` → **PR #13**（https://github.com/haotian-lu-prog/dsh-archived/pull/13）。
-  **未做**：浏览器验收 `tools/browser-acceptance.py`（需要无头 Chrome 9333），以及合并后的发版。
+  **已发布 0.4.0**（2026-10-09 16:30 JST）：PR #13 合并（`5993d62`）→ 打标签 `v0.4.0` → `npm publish`
+  （由用户执行：本机账号开了 2FA，CLI 侧 publish 会以 `EOTP` 结束 —— 预期行为，不是缺陷）→
+  GitHub Release [v0.4.0](https://github.com/haotian-lu-prog/dsh-archived/releases/tag/v0.4.0)。
+  **两条发版经验**：① npm 发布后会进处理队列，CLI 提示「Your package is being processed…」，
+  此后**几分钟内** `npm view <pkg>@<版本>` 是 **E404**、消费者也装不上 —— 正常排队，**不要重复发布**，
+  等几分钟再确认 `dist-tags.latest`；② 2FA 账号下 `npm publish` 需要 OTP，非交互执行必然 EOTP，
+  要么交互式发、要么用带 bypass 的 granular token。
+  **消费者冒烟**（skill Step 5）：从 npm 装 0.4.0 进全新隔离 profile → 起宿主 → 真宿主 e2e **55 PASS / 0 FAIL / 3 SKIP**。
+  **未做**：浏览器验收 `tools/browser-acceptance.py`（需要无头 Chrome 9333；用户已豁免）。
 
 > 一个仓库同一时刻只允许一个写者；下一位开工时把上一行改成自己。
 
