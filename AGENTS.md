@@ -2,6 +2,9 @@
 
 DSH 的「设置 → 已归档」页：逐条 / 批量删除已归档会话，把会话日志、投影缓存、归档索引三处状态一起处理，
 并默认先移进回收站，30 天内可恢复。
+
+0.4.0 起同一页顶部还有一节「清理陈旧会话」：扫描 14 天（可调 7/30）没写过的、或从没写过用户消息的
+**未归档**会话，同样先入回收站；可选每周自动跑一次（也只入回收站）。
 工作区总则见 `~/dev/_shared/CONVENTIONS.md`；本文件只写**本项目特有**的东西。
 
 ## 结构
@@ -11,12 +14,13 @@ DSH 的「设置 → 已归档」页：逐条 / 批量删除已归档会话，�
 - `lib/host/metadata.js` — 从投影缓存文档读标题/创建时间/cwd、血缘、旧聚合行
 - `lib/host/quarantine.js` — 回收站：park / restore / purge / 过期
 - `lib/host/trust.js` — 回环 + 同源 + 标头校验
+- `lib/host/sweep.js` — 陈旧会话扫描（只读）+ 官方 `Workspace.detachSession` 解挂计划
 - `lib/client.js` — 客户端半边（lazy-CJS 单文件，无构建步骤）
 - `cordis.patch.yml` — bundle patch：把插件 `insert` 进 profile
-- `tools/host-smoke.mjs` — 宿主离线套件（68 项，临时 `DSH_HOME` + 假 ctx，**不需要 DSH**）
+- `tools/host-smoke.mjs` — 宿主离线套件（69 项，临时 `DSH_HOME` + 假 ctx，**不需要 DSH**）
 - `tools/client-smoke.mjs` — 客户端冒烟（31 项，桩 React + 桩 fetch）
-- `tools/compat-check.mjs` — 宿主契约检查（11 项，直接读 app.asar；DSH 升级后**先跑这个**）
-- `tools/e2e.py` — 真宿主端到端（40 项：建临时会话 → 归档 → 删除 → 回收站 → 恢复 → 永久删除）
+- `tools/compat-check.mjs` — 宿主契约检查（12 项，直接读 app.asar；DSH 升级后**先跑这个**）
+- `tools/e2e.py` — 真宿主端到端（41 项：建临时会话 → 归档 → 删除 → 回收站 → 恢复 → 永久删除）
 - `tools/browser-acceptance.py` — 真浏览器验收（25 项，纯标准库 CDP）
 - `tools/rpc.py` — 本地 RPC 助手：用 `~/.dsh/.credentials.yaml` 里的会话密钥现场签 cookie
 

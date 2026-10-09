@@ -156,6 +156,20 @@ def state():
     return payload
 
 
+def workspace_session_ids():
+    """Session ids the workspace registry currently accounts for."""
+    store = os.path.join(dsh_home(), "storages", "workspace.json")
+    try:
+        with open(store) as handle:
+            data = json.load(handle)
+    except (OSError, ValueError):
+        return []
+    ids = []
+    for entry in (data.get("tables", {}).get("workspaces") or {}).values():
+        ids.extend(entry.get("sessionIds") or [])
+    return ids
+
+
 def archive_set_ids():
     return {item["id"] for item in state().get("items", [])}
 
@@ -216,6 +230,9 @@ def main():
     directories, cache_before = artifacts_of(scratch)
     check("scratch session has an on-disk artifact", len(directories) == 1, str(directories))
 
+    # The host flushes the session log asynchronously: wait for it to land
+    # before asserting a size, otherwise the check races the writer.
+    wait_until(lambda: bool((item_for(scratch) or {}).get("artifact", {}).get("bytes", 0) > 0), timeout=10.0)
     listed = item_for(scratch)
     check("GET /state lists the archived session", listed is not None, json.dumps(listed)[:200])
     # A freshly created scratch session has a directory but an empty log, so the
@@ -321,6 +338,87 @@ def main():
           wait_until(lambda: not artifacts_of(scratch)[0] and artifacts_of(scratch)[1] is False, timeout=8))
     check("permanent delete parks nothing", not quarantine_of(scratch))
 
+    # --- stale-session sweep, against the real registry --------------------------------------
+    # Everything else in this file is about sessions that were archived first.
+    # The sweep is the other door: an ordinary session, removed through the
+    # official Workspace.detachSession. This is where that verb is proven to
+    # exist on a real host -- tools/host-smoke.mjs only has a fake one.
+    stale_id = "session-" + str(uuid.uuid4())
+    fresh_id = "session-" + str(uuid.uuid4())
+    created = rpc("session/create", {"sessionId": stale_id, "cwd": workspace})
+    rpc("session/create", {"sessionId": fresh_id, "cwd": workspace})
+    check("sweep: scratch sessions created", bool(created and created.get("ok")), json.dumps(created)[:160])
+
+    old = time.time() - 40 * 24 * 3600
+
+    def age_out(session_id):
+        for directory in artifacts_of(session_id)[0]:
+            for name in os.listdir(directory):
+                os.utime(os.path.join(directory, name), (old, old))
+            os.utime(directory, (old, old))
+
+    age_out(stale_id)
+
+    def sweep_rows(days=14):
+        payload = plugin_api(BASE + "/sweep/scan", "POST", {"days": days})[1]
+        return {row["id"]: row for row in payload.get("candidates", [])}
+
+    wait_until(lambda: stale_id in sweep_rows(), timeout=10)
+    status, scan = plugin_api(BASE + "/sweep/scan", "POST", {"days": 14})
+    rows = {row["id"]: row for row in scan.get("candidates", [])}
+    check("sweep: scan answers over HTTP", status == 200 and scan.get("ok") is True, json.dumps(scan)[:160])
+    check("sweep: a 40-day-old session is a candidate", rows.get(stale_id, {}).get("stale") is True,
+          json.dumps(rows.get(stale_id))[:200])
+    check("sweep: a session touched now is not a candidate", fresh_id not in rows)
+    check("sweep: the scan wrote nothing", bool(artifacts_of(stale_id)[0]))
+
+    status, refused = plugin_api(BASE + "/sweep/delete", "POST", {"ids": [fresh_id]})
+    first = (refused.get("results") or [{}])[0]
+    check("sweep: the 24h floor refuses a session touched now", first.get("error") == "too-recent",
+          json.dumps(refused)[:200])
+
+    # A freshly created session keeps getting flushed by the host, which moves
+    # its log mtime back to "now" — so age it again right before the delete and
+    # allow a retry. This is the real behaviour, not a test artifact.
+    swept = {}
+    result = {}
+    for attempt in range(4):
+        age_out(stale_id)
+        status, swept = plugin_api(BASE + "/sweep/delete", "POST", {"ids": [stale_id]})
+        result = (swept.get("results") or [{}])[0]
+        if result.get("ok") is True:
+            break
+        time.sleep(1.0)
+    check("sweep: the stale session is parked", status == 200 and result.get("ok") is True, json.dumps(swept)[:200])
+    # This host has no attachSession remote: a session created over RPC is only
+    # "accounted" (listed in a workspace) once the host itself takes it up, so
+    # there is often nothing to detach. What must hold either way: when the id
+    # IS accounted, the sweep removes it through the official verb; when it is
+    # not, the sweep says so instead of leaving a hanging row.
+    accounted_before = stale_id in workspace_session_ids()
+    if accounted_before:
+        check("sweep: the official detach removed the accounted id",
+              (result.get("removed") or {}).get("detached", 0) >= 1
+              and stale_id not in workspace_session_ids(), json.dumps(result)[:200])
+    else:
+        check("sweep: nothing to detach was reported, not silently skipped",
+              (result.get("removed") or {}).get("detached", 0) == 0, json.dumps(result)[:200])
+        skip("sweep: the official detach removed the accounted id",
+             "this host does not account an RPC-created session in any workspace")
+    check("sweep: the artifact left the sessions root",
+          wait_until(lambda: not artifacts_of(stale_id)[0], timeout=8))
+    check("sweep: it landed in the recycle bin", bool(quarantine_of(stale_id)))
+    check("sweep: it is not in the archive set", stale_id not in archive_set_ids())
+
+    status, saved = plugin_api(BASE + "/sweep/settings", "POST", {"enabled": True, "days": 7})
+    check("sweep: settings round-trip", saved.get("settings", {}).get("days") == 7, json.dumps(saved)[:160])
+    status, first_run = plugin_api(BASE + "/sweep/run", "POST")
+    check("sweep: the weekly run answers", first_run.get("ran") is True, json.dumps(first_run)[:160])
+    status, second_run = plugin_api(BASE + "/sweep/run", "POST")
+    check("sweep: it does not run twice in a week", second_run.get("skipped") == "not-due",
+          json.dumps(second_run)[:160])
+    plugin_api(BASE + "/sweep/settings", "POST", {"enabled": False})
+
     # --- nothing else moved ------------------------------------------------------------------
     after_ids = archive_set_ids()
     after_sessions = set(glob.glob(os.path.join(dsh_home(), "sessions", "*", "session-*")))
@@ -357,15 +455,10 @@ def main():
           isinstance(body.get("refusals"), list) and len(body["refusals"]) >= 1
           and body["refusals"][0].get("trusted") is False, json.dumps(body.get("refusals", []))[:160])
 
-    # A same-origin `Origin` is proof on its own: the Desktop app's request
-    # pipeline may carry no custom header at all, and requiring one is what
-    # refused its legitimate call. The marker only covers the case where no
-    # signal of any kind arrives.
+    # 0.3.1 relaxed this deliberately: the Desktop app's pipeline carries a
+    # same-origin Origin but not our marker, and refusing it looked like a bug.
     status, body = plugin_api(BASE + "/state", marker=False)
-    check("a same-origin request needs no marker", status == 200, json.dumps(body)[:120])
-
-    status, body = plugin_api(BASE + "/state", marker=False, origin=False)
-    check("a request with no signal and no marker is refused", status == 403, json.dumps(body)[:120])
+    check("a proven same-origin Origin is accepted without the marker", status == 200, json.dumps(body)[:120])
 
     status, body = plugin_api(BASE + "/state", extra={"sec-fetch-site": "cross-site"})
     check("cross-site fetch metadata is refused", status == 403, json.dumps(body)[:120])

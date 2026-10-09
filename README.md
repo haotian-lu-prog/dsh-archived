@@ -34,6 +34,11 @@ DSH 0.2.0-rc.2 里，一个已归档会话牵涉四处状态，少清一处列�
 - 路由仅限回环地址 + 同源 + 自定义标头：`Origin` 存在时必须与 Host 匹配；浏览器对同源 GET 不发 `Origin`，
   该情形由 `sec-fetch-site: same-origin` 兜底，两个信号都没有则拒绝；
 - 宿主若失去 `workspaceRegistry.unarchiveSession`，破坏性路由**直接拒绝**（`no-registry`），不会「删了文件但留下索引」这种假成功。
+- **陈旧清理只碰未归档会话**，且只碰「日志超过 N 天没写」或「从没写过用户消息」的；已归档的仍归上面的归档流程管；
+- **24 小时硬保护**：日志在 24 小时内写过的一律不列、不删（与天数设置无关）；
+- **正在跑、或有运行中子代理后代的会话直接拒绝**；
+- 从工作区列表移除走官方 `Workspace.detachSession`；宿主没有这个动词时**拒绝删除**（`no-detach`），不会删了文件却留下悬挂行；
+- **自动清理只进回收站**，永不永久删除；默认关闭，开启后每周最多跑一次。
 
 ### 删除后的残留清理
 
@@ -53,6 +58,10 @@ DSH 0.2.0-rc.2 里，一个已归档会话牵涉四处状态，少清一处列�
 
 导航行与页面标题都是 **`Archived`（英文）/ `已归档`（中文）**。
 
+页面顶部还有一节**「清理陈旧会话 / Clean up stale sessions」**：陈旧标准下拉（7 / 14 / 30 天）+「扫描」按钮；
+候选行显示标题、原因（陈旧 / 空会话 / 两者）和「N 天未动 · 占用」，勾选后二次确认移入回收站；
+底部是「每周自动清理」开关与上次运行结果。这一节只列**未归档**会话，扫描本身是只读的。
+
 ## 宿主路由
 
 | 方法 | 路径 | 说明 |
@@ -63,8 +72,13 @@ DSH 0.2.0-rc.2 里，一个已归档会话牵涉四处状态，少清一处列�
 | POST | `/api/dsh-archived/restore` | `{ sessionId }` 从回收站恢复并重新归档 |
 | POST | `/api/dsh-archived/empty-quarantine` | 彻底清空回收站 |
 | POST | `/api/dsh-archived/reveal` | `{ sessionId }` 在系统文件管理器里打开该会话目录 |
+| POST | `/api/dsh-archived/sweep/scan` | `{ days? }` 陈旧/空会话候选（只读，不写盘） |
+| POST | `/api/dsh-archived/sweep/delete` | `{ ids, mode }` 逐个进回收站 + 官方 detach |
+| POST | `/api/dsh-archived/sweep/settings` | `{ enabled?, days? }` 每周自动清理的开关与天数 |
+| POST | `/api/dsh-archived/sweep/run` | 立刻跑一次每周清理（同一套保护） |
 
 拒绝码：`invalid-session-id`、`not-archived`、`session-running`、`subagent-running`、`no-registry`、
+`archived-session`、`too-recent`、`no-detach`、
 `busy`、`not-quarantined`、`no-artifact`、`forbidden`、`internal`。
 
 ## 安装

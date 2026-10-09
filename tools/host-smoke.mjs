@@ -10,7 +10,7 @@
  *     node tools/host-smoke.mjs
  */
 
-import { mkdtempSync, mkdirSync, writeFileSync, existsSync, readFileSync, rmSync, readdirSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, existsSync, readFileSync, rmSync, readdirSync, utimesSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { dirname } from "node:path";
@@ -137,6 +137,51 @@ const ctx = {
   },
 };
 
+// --- sweep candidates: stale by age, empty by content, plus two refusals --------
+const sweepIds = {
+  stale: "session-a1111111-1111-4111-8111-111111111111",
+  emptyish: "session-a2222222-2222-4222-8222-222222222222",
+  fresh: "session-a3333333-3333-4333-8333-333333333333",
+  runningOnly: "session-a5555555-5555-4555-8555-555555555555",
+  archivedKeep: "session-a6666666-6666-4666-8666-666666666666",
+};
+const OLD_MS = Date.now() - 40 * 24 * 60 * 60 * 1000;
+function seedSweepArtifact(sessionId, body, mtimeMs) {
+  const dir = join(home, "sessions", bucket, sessionId);
+  mkdirSync(dir, { recursive: true });
+  const log = join(dir, "session.v4.jsonl");
+  writeFileSync(log, body);
+  writeFileSync(join(dir, "session.lock"), "");
+  utimesSync(log, new Date(mtimeMs), new Date(mtimeMs));
+  utimesSync(dir, new Date(mtimeMs), new Date(mtimeMs));
+  return { dir: dir, log: log };
+}
+const sessionLine = (id) => JSON.stringify({ type: "session", version: 4, id: id }) + "\n";
+const userLine = JSON.stringify({ type: "user/message", seq: 1, data: { content: [{ type: "text", text: "hi" }] } }) + "\n";
+seedSweepArtifact(sweepIds.stale, sessionLine(sweepIds.stale) + userLine, OLD_MS);
+seedSweepArtifact(sweepIds.emptyish, sessionLine(sweepIds.emptyish), OLD_MS);
+seedSweepArtifact(sweepIds.fresh, sessionLine(sweepIds.fresh) + userLine, Date.now());
+// Two sessions old enough to tempt a sweep, which it must still refuse: one
+// running, one archived. seeding backdates their LOG, which is what age means.
+seedSweepArtifact(sweepIds.runningOnly, sessionLine(sweepIds.runningOnly) + userLine, OLD_MS);
+seedSweepArtifact(sweepIds.archivedKeep, sessionLine(sweepIds.archivedKeep) + userLine, OLD_MS);
+const sweepAgentGet = ctx.agents.get;
+ctx.agents.get = (sessionId) => (sessionId === sweepIds.runningOnly ? { id: sessionId, status: "running" } : sweepAgentGet(sessionId));
+const detachCalls = [];
+const sweptWorkspaceIds = [sweepIds.stale, sweepIds.emptyish, sweepIds.fresh, sweepIds.runningOnly];
+registry.list = () => [
+  {
+    id: "ws-test",
+    path: "/Users/test/project",
+    sessionIds: sweptWorkspaceIds.slice(),
+    async detachSession(sessionId) {
+      const at = sweptWorkspaceIds.indexOf(sessionId);
+      if (at !== -1) sweptWorkspaceIds.splice(at, 1);
+      detachCalls.push(sessionId);
+    },
+  },
+];
+
 const plugin = await import(join(here, "..", "lib", "index.js"));
 plugin.apply(ctx);
 
@@ -177,7 +222,7 @@ const artifactOf = (id) => join(home, "sessions", bucket, id);
 const cacheOf = (id) => join(home, "storages", "session_projcache", "sessions", id + ".json");
 
 // --- route shape ----------------------------------------------------------------
-check("registers six routes under both prefixes", routes.size === 12
+check("registers ten routes under both prefixes", routes.size === 20
   && [...routes.keys()].some((p) => p.startsWith("/api/dsh-archived/"))
   && [...routes.keys()].some((p) => p.startsWith("/api/dsh-archived-sessions/")), [...routes.keys()].length + " routes");
 
@@ -363,6 +408,49 @@ const blindResponse = makeResponse();
 await blindRoutes.get(P + "/delete").handler(makeRequest({ method: "POST", body: { sessionId: ids.indexOnly } }), blindResponse);
 check("a host without the registry API refuses instead of half-deleting", blindResponse.captured.body.error === "no-registry", JSON.stringify(blindResponse.captured.body));
 check("the primary host was untouched by that probe", routes.size === routesWithout);
+
+// --- sweep: scan (read-only) -------------------------------------------------------
+// The archive set is only re-seeded here: the suite's own delete-all test empties
+// it long before this point, and the sweep must ignore whatever the archive page
+// currently owns.
+archived.add(sweepIds.archivedKeep);
+const sweepScan = await call(P + "/sweep/scan", { method: "POST", body: { days: 14 } });
+check("POST /sweep/scan answers", sweepScan.status === 200 && sweepScan.body.ok === true, String(sweepScan.status));
+const sweepRows = Object.fromEntries(sweepScan.body.candidates.map((row) => [row.id, row]));
+check("40 天前的会话成为候选", sweepIds.stale in sweepRows && sweepRows[sweepIds.stale].stale === true, Object.keys(sweepRows).length + " rows");
+check("只发过 header 的空会话成为候选", sweepRows[sweepIds.emptyish]?.empty === true, JSON.stringify(sweepRows[sweepIds.emptyish] ?? null).slice(0, 140));
+check("今天写过的会话不在候选里", (sweepIds.fresh in sweepRows) === false);
+check("已归档的会话留给归档页", (sweepIds.archivedKeep in sweepRows) === false);
+check("正在跑的会话列出来但不可删", sweepRows[sweepIds.runningOnly]?.eligible === false && sweepRows[sweepIds.runningOnly]?.running === true, JSON.stringify(sweepRows[sweepIds.runningOnly] ?? null).slice(0, 140));
+check("扫描不写盘", existsSync(join(home, "sessions", bucket, sweepIds.stale)));
+
+// --- sweep: delete ------------------------------------------------------------------
+const sweepArchived = await call(P + "/sweep/delete", { method: "POST", body: { ids: [sweepIds.archivedKeep] } });
+check("sweep 拒绝已归档 id", sweepArchived.body.results[0].error === "archived-session", JSON.stringify(sweepArchived.body.results[0]));
+const sweepRunning = await call(P + "/sweep/delete", { method: "POST", body: { ids: [sweepIds.runningOnly] } });
+check("sweep 拒绝在跑的会话", sweepRunning.body.results[0].error === "session-running", JSON.stringify(sweepRunning.body.results[0]));
+const sweepBadId = await call(P + "/sweep/delete", { method: "POST", body: { ids: ["not-a-session"] } });
+check("sweep 拒绝非法 id", sweepBadId.body.results[0].error === "invalid-session-id", JSON.stringify(sweepBadId.body.results[0]));
+
+const swept = await call(P + "/sweep/delete", { method: "POST", body: { ids: [sweepIds.stale, sweepIds.emptyish] } });
+check("sweep 把两个候选都停进回收站", swept.status === 200 && swept.body.ok === true && swept.body.results.every((row) => row.ok === true), JSON.stringify(swept.body.results).slice(0, 200));
+check("被清的会话日志离开 sessions 根", !existsSync(join(home, "sessions", bucket, sweepIds.stale)) && !existsSync(join(home, "sessions", bucket, sweepIds.emptyish)));
+check("被清的会话进了同一个回收站", existsSync(join(home, ".archived-sessions-quarantine", sweepIds.stale, "session")) && existsSync(join(home, ".archived-sessions-quarantine", sweepIds.emptyish, "session")));
+check("官方 detachSession 把 id 从工作区列表摘掉", detachCalls.includes(sweepIds.stale) && detachCalls.includes(sweepIds.emptyish) && sweptWorkspaceIds.includes(sweepIds.stale) === false, JSON.stringify({ detachCalls: detachCalls, left: sweptWorkspaceIds }));
+check("回收站里的会话可以按原路恢复", (await call(P + "/restore", { method: "POST", body: { sessionId: sweepIds.stale } })).body.ok === true);
+
+// --- sweep: settings + the weekly run -------------------------------------------------
+const sweepSaved = await call(P + "/sweep/settings", { method: "POST", body: { enabled: true, days: 7 } });
+check("sweep 设置可保存", sweepSaved.body.ok === true && sweepSaved.body.settings.enabled === true && sweepSaved.body.settings.days === 7, JSON.stringify(sweepSaved.body.settings));
+const autoId = "session-a4444444-4444-4444-8444-444444444444";
+seedSweepArtifact(autoId, sessionLine(autoId) + userLine, Date.now() - 30 * 24 * 60 * 60 * 1000);
+sweptWorkspaceIds.push(autoId);
+const ran = await plugin.runAutoSweep(ctx, Date.now());
+check("到期的自动 sweep 只把陈旧会话停进回收站", ran.ran === true && ran.parked >= 1, JSON.stringify(ran));
+check("自动 sweep 落的也是同一个回收站", existsSync(join(home, ".archived-sessions-quarantine", autoId, "session")));
+check("自动 sweep 走的是同一个 detach 出口", detachCalls.includes(autoId));
+const notDue = await plugin.runAutoSweep(ctx, Date.now());
+check("同一周内不会重复跑", notDue.skipped === "not-due", JSON.stringify(notDue));
 
 rmSync(home, { recursive: true, force: true });
 
