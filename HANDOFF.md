@@ -14,8 +14,13 @@
   **已完成**：`lib/host/sweep.js`（扫描 + detach 计划）· `lib/index.js`（4 条路由 + 每周定时器 + 设置文档
   `$DSH_HOME/dsh-archived/sweep.json`）· `lib/client.js`（页面顶部一节 + 中英 i18n）· 离线套件与契约检查
   （`npm test` 全绿：69 / 31 / 12 项）· README / AGENTS / decisions 同步。
-  **未做**：真宿主 `tools/e2e.py`（需要隔离宿主，因为 profile 里装的是 0.3.1 的副本，不是本仓库的链接）；
-  分支未推送、未开 PR。
+  **已验证**：真宿主 `tools/e2e.py` 在**隔离宿主**上跑通（临时 `DSH_HOME` + `--from-default-profile web` +
+  `dsh plugin add link:<repo>` + 端口 3987–3993）：**55 PASS / 3 SKIP / 0 FAIL**。期间顺手修了两处既有问题 ——
+  ① e2e 的「无 marker 即拒绝」是 0.3.1 之前的旧规则（现在「已证明的同源 Origin」就够）；② artifact 尺寸断言没等日志落盘。
+  并补了 sweep 场景（扫描/24h 保护/入回收站/每周运行）。
+  **真宿主行为记录**：这份 DSH 没有 `attachSession` 远程（只有 `insertSessionBefore` 与 `detachSession`），
+  所以 RPC 建的会话不在任何工作区列表里 —— 此时 `detached: 0` 是正确结果，不是缺陷（e2e 里以 SKIP 注明原因）。
+  **未做**：分支未推送、未开 PR。
 
 > 一个仓库同一时刻只允许一个写者；下一位开工时把上一行改成自己。
 
