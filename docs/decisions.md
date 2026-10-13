@@ -1,5 +1,39 @@
 # 决策记录
 
+## 2026-10-13 — 0.4.1：删掉的会话会「回来一会儿」，根因是索引条目清得太早
+
+**症状（用户报的）**：彻底删除一个已归档会话之后，它会重新出现在工作区列表里（文件其实已经没了），只有重启宿主才消失。
+
+**复现（隔离宿主 + 真 RPC，不是读代码猜）**：`DSH_HOME=<临时目录> dsh web --port 3987` + 本仓库 `link:` 安装 →
+`workspace/create` → `session/create`（带 `workspaceId`，让工作区真的记账）→ `session/prompt`（让它非 blank，
+否则客户端本来就不画 blank 行）→ `workspace/archiveSession` → 走插件路由 `mode: "forever"` 删除。删完：磁盘干净、
+`archivedSessionIds` 为空，但 `session/list` 仍然返回这条会话（`agentAvailable: true`），`workspace.json` 里那个工作区的
+`sessionIds` 也仍然写着它；**重启宿主后两者同时消失** —— 正是用户看到的两半。
+
+**根因**（三个事实叠加，缺一不成）：
+
+1. 归档**只是**把 id 放进 `archivedSessionIds`——那是唯一让会话从所有列表里消失的东西，取消归档 = 让它重新可见。
+2. 归档**不会**释放宿主持有的活会话（`ctx.sessions` 里那个空闲 agent 还在），而浏览器的行来自 `session.list` =
+   持久化 header ∪ **活会话**（`dsh-session-query` 的 `listSessions`），所以宿主仍能为一个文件已删的会话产出摘要。
+3. workspace registry 里那个工作区的 `sessionIds` 记账位从未被碰过——归档刻意保留它是为了「取消归档回到原位」，
+   于是行一被解除隐藏就按回原工作区分组。
+
+**结论**：删除顺序不能是「删文件 → 立刻清索引」。索引条目要留到**宿主放手**为止（`lib/host/deferred.js` 记账于
+`$DSH_HOME/dsh-archived/deferred.json`，`stateOf` 不画、`deferred` 字段单独报，`collectDeferred` 在插件加载 / 每次 `/state` /
+每小时 tick 上清）；永久删除另走官方 `Workspace.detachSession` 摘掉记账位，并广播 `api-session/removed`；
+回收站路径不摘也不广播（恢复要回原位，客户端丢了摘要则恢复后要等下次刷新才画得出来）。
+
+**代价（已知并接受）**：宿主长时间不重启时，那条（任何默认视图都看不见的）索引条目会一直留着；
+如果用户显式打开「显示已归档」过滤器，可能看到一行没有 payload 的幽灵——换来的是默认视图不再骗人、重启即自愈。
+
+**没选的方案**：① 只 detach + 广播：客户端下一次全量刷新就复活（`session.list` 仍返回活会话），治不了；
+② 立刻清索引 + 让客户端过滤：插件的契约是「列表不骗人」，不该靠改宿主客户端渲染兜；
+③ 逼宿主释放活会话：0.2.0-rc.2 没有这个动词（`sessions`/`agents` 只能进不能出，`workspace/session-stop` 只取消回合），
+硬拆别人的 fiber 是另一种 bug。
+
+**验证**：`npm test` 全绿（host-smoke 102 项 / client-smoke 31 项 / compat-check 12 项）；`tools/e2e.py` 新增真宿主断言
+（`Workspace.detachSession` 真把 id 从 `workspace.json` 摘掉）。
+
 ## 2026-10-09 — 并入「陈旧会话清理」：官方 detach、只落回收站、每周半自动
 
 - **背景**：2026-10-08 清掉 92 个「会话候选」时，靠的是一个 out-of-band 的 CLI（`_shared/bin/dsh-session-cleanup.mjs`）：
