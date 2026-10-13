@@ -137,6 +137,14 @@ const ctx = {
   },
 };
 
+// `api-session/removed` is the host's own "this Session is gone" broadcast,
+// and it is on the forwarded-event allowlist. The fake records it so a delete
+// can be checked for announcing it.
+const emitted = [];
+ctx.emit = (event, ...args) => {
+  emitted.push([event, ...args]);
+};
+
 // --- sweep candidates: stale by age, empty by content, plus two refusals --------
 const sweepIds = {
   stale: "session-a1111111-1111-4111-8111-111111111111",
@@ -451,6 +459,69 @@ check("自动 sweep 落的也是同一个回收站", existsSync(join(home, ".arc
 check("自动 sweep 走的是同一个 detach 出口", detachCalls.includes(autoId));
 const notDue = await plugin.runAutoSweep(ctx, Date.now());
 check("同一周内不会重复跑", notDue.skipped === "not-due", JSON.stringify(notDue));
+
+// --- the archive entry a delete has to keep --------------------------------------------
+// The archive entry is the ONLY thing hiding an archived session from every list,
+// and DSH keeps serving a summary for a Session the host still holds in memory
+// (archiving never disposes the idle agent). Dropping the entry therefore puts a
+// deleted session back into its workspace until the host restarts. It stays until
+// the host lets go — hidden from the panel while it does.
+const heldId = "session-b1111111-1111-4111-8111-111111111111";
+const parkedHeldId = "session-b2222222-2222-4222-8222-222222222222";
+seedArtifact(heldId, 900);
+seedCache(heldId, "宿主还记着的会话");
+archived.add(heldId);
+headersOf[heldId] = { id: heldId, origin: "root" };
+sweptWorkspaceIds.push(heldId);
+
+const heldDelete = await call(P + "/delete", { method: "POST", body: { sessionId: heldId, mode: "forever" } });
+check("宿主还记着的会话：删除先留着索引条目",
+  heldDelete.body.ok === true && heldDelete.body.deferred === true, JSON.stringify(heldDelete.body).slice(0, 160));
+check("文件照删，留下的只是索引条目", existsSync(artifactOf(heldId)) === false && existsSync(cacheOf(heldId)) === false);
+check("永久删除摘掉工作区记账位",
+  detachCalls.includes(heldId) && sweptWorkspaceIds.includes(heldId) === false,
+  JSON.stringify({ detachCalls: detachCalls, left: sweptWorkspaceIds }));
+check("永久删除广播 api-session/removed",
+  emitted.some(([event, id]) => event === "api-session/removed" && id === heldId), JSON.stringify(emitted.slice(-2)));
+check("索引条目没被清掉（它正是挡住幽灵行的那一处）",
+  archived.has(heldId) === true && unarchiveCalls.includes(heldId) === false, JSON.stringify([...archived]));
+const heldState = await call(P + "/state");
+check("面板不画这条幽灵行", heldState.body.items.every((item) => item.id !== heldId));
+check("面板把待清理的条目单独报出来",
+  heldState.body.deferred.count === 1 && heldState.body.deferred.items[0].id === heldId,
+  JSON.stringify(heldState.body.deferred));
+
+// The host letting go — a restart does that to every live Session at once.
+delete headersOf[heldId];
+const collected = await call(P + "/state");
+check("宿主放手后条目自动清掉",
+  archived.has(heldId) === false && unarchiveCalls.includes(heldId) === true,
+  JSON.stringify({ archived: [...archived], unarchiveCalls: unarchiveCalls.slice(-3) }));
+check("清完之后待清理集合为空", collected.body.deferred.count === 0, JSON.stringify(collected.body.deferred));
+check("账本也写回了磁盘（不然下次加载会把这条又读回来）",
+  JSON.parse(readFileSync(join(home, "dsh-archived", "deferred.json"), "utf8")).items[heldId] === undefined,
+  readFileSync(join(home, "dsh-archived", "deferred.json"), "utf8").slice(0, 200));
+
+// A parked session is restorable, so its accounting slot stays (unarchiving must
+// restore the position) and no client is told the session is gone: the deferred
+// entry alone keeps the row out of every list.
+seedArtifact(parkedHeldId, 400);
+seedCache(parkedHeldId, "还记着的会话（进回收站）");
+archived.add(parkedHeldId);
+headersOf[parkedHeldId] = { id: parkedHeldId, origin: "root" };
+sweptWorkspaceIds.push(parkedHeldId);
+const parkedDeferred = await call(P + "/delete", { method: "POST", body: { sessionId: parkedHeldId } });
+check("回收站路径同样保留索引条目",
+  parkedDeferred.body.deferred === true && archived.has(parkedHeldId) === true, JSON.stringify(parkedDeferred.body).slice(0, 160));
+check("回收站路径不动工作区记账位（恢复要回原位）",
+  sweptWorkspaceIds.includes(parkedHeldId) === true && detachCalls.includes(parkedHeldId) === false);
+check("回收站路径不广播移除",
+  emitted.some(([event, id]) => event === "api-session/removed" && id === parkedHeldId) === false);
+const restoredHeld = await call(P + "/restore", { method: "POST", body: { sessionId: parkedHeldId } });
+check("恢复会撤掉延迟标记",
+  restoredHeld.body.ok === true && restoredHeld.body.restored.deferred === true, JSON.stringify(restoredHeld.body).slice(0, 200));
+check("恢复后面板重新显示这一行",
+  (await call(P + "/state")).body.items.some((item) => item.id === parkedHeldId));
 
 rmSync(home, { recursive: true, force: true });
 

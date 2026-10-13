@@ -5,9 +5,9 @@
 
 ## 当前写者
 
-- 工具：DSH（会话 `session-ce4a5890`）· 2026-10-09 15:25 JST 起
-- 分支：`feat/stale-sweep`（目标 0.4.0）
-- 开始时间：2026-10-09 15:25 JST
+- 工具：DSH · 2026-10-13 23:47 JST 起
+- 分支：`fix/ghost-after-delete`（基于 `release/0.4.0`）→ 0.4.1
+- 开始时间：2026-10-13 23:47 JST
 - 本轮：**并入「陈旧会话清理」**（手动 + 半自动）。扫描「14 天以上 + 空会话」→ 勾选删除：官方
   `Workspace.detachSession` 从工作区列表移除 + 复用现有回收站流水线；可选的每周自动运行 = **只移进回收站**。
   取舍与边界见 `docs/decisions.md`。
@@ -21,9 +21,52 @@
   **真宿主行为记录**：这份 DSH 没有 `attachSession` 远程（只有 `insertSessionBefore` 与 `detachSession`），
   所以 RPC 建的会话不在任何工作区列表里 —— 此时 `detached: 0` 是正确结果，不是缺陷（e2e 里以 SKIP 注明原因）。
   **已推送并开 PR**：`feat/stale-sweep` → **PR #13**（https://github.com/haotian-lu-prog/dsh-archived/pull/13）。
-  **未做**：浏览器验收 `tools/browser-acceptance.py`（需要无头 Chrome 9333），以及合并后的发版。
+  **已发布 0.4.0**（2026-10-09 16:30 JST）：PR #13 合并（`5993d62`）→ 打标签 `v0.4.0` → `npm publish`
+  （由用户执行：本机账号开了 2FA，CLI 侧 publish 会以 `EOTP` 结束 —— 预期行为，不是缺陷）→
+  GitHub Release [v0.4.0](https://github.com/haotian-lu-prog/dsh-archived/releases/tag/v0.4.0)。
+  **两条发版经验**：① npm 发布后会进处理队列，CLI 提示「Your package is being processed…」，
+  此后**几分钟内** `npm view <pkg>@<版本>` 是 **E404**、消费者也装不上 —— 正常排队，**不要重复发布**，
+  等几分钟再确认 `dist-tags.latest`；② 2FA 账号下 `npm publish` 需要 OTP，非交互执行必然 EOTP，
+  要么交互式发、要么用带 bypass 的 granular token。
+  **消费者冒烟**（skill Step 5）：从 npm 装 0.4.0 进全新隔离 profile → 起宿主 → 真宿主 e2e **55 PASS / 0 FAIL / 3 SKIP**。
+  **未做**：浏览器验收 `tools/browser-acceptance.py`（需要无头 Chrome 9333；用户已豁免）。
 
 > 一个仓库同一时刻只允许一个写者；下一位开工时把上一行改成自己。
+
+## 当前状态（2026-10-13）—— **0.4.1：删除后的幽灵行**
+
+**症状（用户报的）**：彻底删除一个已归档会话后，它会重新出现在工作区列表里，重启宿主才消失。
+
+**根因**：`archivedSessionIds` 是唯一让会话从所有列表里消失的东西；归档不释放宿主持有的活会话，而 `session.list`
+= 持久化 header ∪ 活会话，所以「删文件 + 立刻清索引」等于让宿主内存里的幽灵立刻可见；工作区记账位（`sessionIds`）
+又把它按回原分组。真宿主复现过程与三个事实见 `docs/decisions.md` 的 2026-10-13 条。
+
+**改了什么**：新增 `lib/host/deferred.js`（延迟清理的索引条目，`$DSH_HOME/dsh-archived/deferred.json`）；
+`deleteOne` 在宿主还持有会话时保留条目、面板不画（`/state` 的 `deferred` 字段单独报），宿主放手后在插件加载 / 每次 `/state` /
+每小时 tick 上自动清；永久删除额外走官方 `Workspace.detachSession` 摘掉记账位 + 广播 `api-session/removed`；
+回收站路径不摘、不广播（恢复要回原位）。
+
+**验证**（全部实跑）：
+① `npm test` 全绿：host-smoke 102 / client-smoke 31 / compat-check 12（新增「宿主还记着的会话」段）；
+② 真宿主 `tools/e2e.py` 连跑三遍：**61 PASS / 3 SKIP / 0 FAIL**（新增第五处记账位的断言）；
+③ 隔离宿主上的幽灵行场景（`DSH_HOME=<临时> dsh web --port 3987` + 本仓库 `link:` 安装）：
+
+| 时刻 | 日志/缓存 | 宿主归档集合 | 工作区记账 | `session.list` | 面板行 | deferred |
+|---|---|---|---|---|---|---|
+| 归档后 | 1 / 有 | 有 | 有 | 有 | 有 | 0 |
+| 永久删除后（修复后） | 0 / 无 | **有（幽灵被挡住）** | **已摘** | 有（宿主持有） | 无 | 1 |
+| 重启后 | 0 / 无 | 无（自动清） | 无 | 无 | 无 | 0 |
+
+修复前同一路径：删除后归档集合立刻为空 ⇒ 幽灵行回到工作区，只有重启才消失（这就是用户报的那两半）。
+
+**顺带修掉的两处既有测试缺陷**：① e2e 对着同一个 `DSH_HOME` 跑第二遍必然在「sweep: the weekly run answers」上失败
+（插件设置文档里的 `lastRunAt` 还在一周内）——现在开跑前先清掉插件自己的设置文档；
+② 「sweep: a 40-day-old session is a candidate」与「sweep: the artifact left the sessions root」会被忙碌真宿主
+（继续 flush 日志、把刚移走的目录写回来）打成假失败——改成重试与如实报告（SKIP），与仓内既有处理一致。
+
+**本轮自查踩到的坑（已修）**：延迟账本最初在 `collectDeferred()` 里先改内存 Map 再调 `forgetDeferred()`，
+而后者只在「自己删掉了东西」时才写盘 —— 内存正确、磁盘没更新，下次加载会把已清的条目又读回来。
+现在只由 `forgetDeferred()` 负责删除+落盘，并补了「账本也写回了磁盘」的断言（host-smoke）。
 
 ## 当前状态（2026-10-08）—— **发布 0.3.2：接受导入 id + 按真实 id 解析目录**
 
