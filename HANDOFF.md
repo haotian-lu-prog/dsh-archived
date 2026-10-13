@@ -68,6 +68,12 @@
 而后者只在「自己删掉了东西」时才写盘 —— 内存正确、磁盘没更新，下次加载会把已清的条目又读回来。
 现在只由 `forgetDeferred()` 负责删除+落盘，并补了「账本也写回了磁盘」的断言（host-smoke）。
 
+**发布（2026-10-14 00:12 JST）**：PR [#15](https://github.com/haotian-lu-prog/dsh-archived/pull/15) squash 合并到 main（`b52496d`）
+→ 标签 `v0.4.1` → GitHub Release [v0.4.1](https://github.com/haotian-lu-prog/dsh-archived/releases/tag/v0.4.1)。
+`npm publish` **仍需用户执行**：这台机器的 `~/.npmrc` 现在连 `npm whoami` 都是 401（凭据过期/未登录），
+叠加 2FA，CLI 侧发不出去（与 0.4.0 记的 EOTP 同一类）。用户跑完 `npm publish` 后按 0.4.0 的经验核对：
+等几分钟 → `npm view dsh-archived dist-tags`（latest 应为 `0.4.1`）→ 从 npm 装进全新 profile 再跑一遍 `tools/e2e.py`。
+
 ## 当前状态（2026-10-08）—— **发布 0.3.2：接受导入 id + 按真实 id 解析目录**
 
 用户报「设置 → 已归档」里删不掉（截图里 40 条，点「删除全部」只得到一句通用错误）。
